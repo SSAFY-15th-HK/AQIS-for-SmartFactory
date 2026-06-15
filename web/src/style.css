@@ -5,10 +5,10 @@
 }
 
 body { margin: 0; }
-button { font: inherit; }
+button, input { font: inherit; }
 
 .page {
-  width: min(1120px, calc(100% - 32px));
+  width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
   padding: 40px 0;
 }
@@ -31,9 +31,9 @@ button { font: inherit; }
 
 h1 { font-size: 44px; margin: 0 0 12px; }
 h2 { font-size: 18px; margin: 0 0 14px; color: #bfdbfe; }
-.description { color: #a8b3c7; max-width: 720px; line-height: 1.6; }
+.description { color: #a8b3c7; max-width: 760px; line-height: 1.6; }
 
-.statusBox, .card, .panel {
+.statusBox, .card, .panel, .statusCard {
   border: 1px solid rgba(148, 163, 184, 0.22);
   background: rgba(15, 23, 42, 0.78);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.24);
@@ -56,15 +56,24 @@ h2 { font-size: 18px; margin: 0 0 14px; color: #bfdbfe; }
 .dot.bad { background: #ef4444; box-shadow: 0 0 16px #ef4444; }
 
 .grid { display: grid; gap: 16px; }
+.statusGrid { grid-template-columns: repeat(4, 1fr); margin-bottom: 16px; }
 .cards { grid-template-columns: repeat(4, 1fr); margin-bottom: 16px; }
 .two { grid-template-columns: 1fr 1fr; margin-bottom: 16px; }
+
+.statusCard { padding: 16px; }
+.statusCard span { display: block; color: #94a3b8; font-size: 13px; margin-bottom: 8px; }
+.statusCard strong { font-size: 20px; }
+.okText { color: #4ade80; }
+.warnText { color: #facc15; }
+.dangerText { color: #fb7185; }
+.mutedText { color: #cbd5e1; }
 
 .card { padding: 20px; }
 .card strong { font-size: 34px; }
 .card.danger strong { color: #fb7185; }
 .panel { padding: 22px; margin-bottom: 16px; }
 
-.buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+.buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
 button {
   border: 0;
   border-radius: 12px;
@@ -72,8 +81,12 @@ button {
   color: white;
   padding: 11px 16px;
   cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease, opacity 0.12s ease;
 }
-button:hover { background: #1d4ed8; }
+button:hover { background: #1d4ed8; transform: translateY(-1px); }
+button:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
+button.secondary { background: #475569; }
+button.secondary:hover { background: #334155; }
 button.stop { background: #dc2626; }
 button.stop:hover { background: #b91c1c; }
 
@@ -91,6 +104,7 @@ dd { margin: 4px 0 0; font-weight: 700; }
   padding: 0 16px;
   background: repeating-linear-gradient(90deg, #1f2937 0 20px, #111827 20px 40px);
   border-radius: 14px;
+  margin-top: 6px;
 }
 .belt span {
   width: 28px;
@@ -104,6 +118,40 @@ dd { margin: 4px 0 0; font-weight: 700; }
 .belt span:nth-child(4) { background: #eab308; }
 @keyframes move { from { transform: translateX(-18px); } to { transform: translateX(18px); } }
 
+.missionMeter {
+  height: 14px;
+  overflow: hidden;
+  background: #020617;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 999px;
+  margin-bottom: 16px;
+}
+.missionMeter div {
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #fb7185);
+  transition: width 0.25s ease;
+}
+
+.commandForm { display: flex; gap: 10px; margin-bottom: 16px; }
+.commandForm input {
+  flex: 1;
+  color: #e5edf7;
+  background: #020617;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.commandForm input:focus { outline: 2px solid rgba(125, 211, 252, 0.35); }
+
+.messages { display: grid; gap: 10px; }
+.message {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(30, 41, 59, 0.78);
+}
+.message p { margin: 4px 0; }
+.message small { color: #7dd3fc; letter-spacing: 0.08em; }
+
 .events { display: grid; gap: 10px; }
 pre {
   margin: 0;
@@ -115,9 +163,15 @@ pre {
   border-radius: 12px;
   padding: 12px;
 }
-.muted { color: #94a3b8; }
+.muted, .mutedText { color: #94a3b8; }
 
-@media (max-width: 820px) {
+@media (max-width: 900px) {
   .hero, .two { grid-template-columns: 1fr; display: grid; }
-  .cards { grid-template-columns: repeat(2, 1fr); }
+  .cards, .statusGrid { grid-template-columns: repeat(2, 1fr); }
+  .commandForm { flex-direction: column; }
+}
+
+@media (max-width: 560px) {
+  .cards, .statusGrid, .modeList { grid-template-columns: 1fr; }
+  h1 { font-size: 34px; }
 }
