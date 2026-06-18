@@ -9,6 +9,7 @@ venv/
 node_modules/
 dist/
 .vite/
+AQIS-sim/web/vite-dev*.log
 
 # Environment
 .env
