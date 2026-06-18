@@ -58,6 +58,10 @@ class StatsService:
         self._mission_running = False
         return self.current()
 
+    def set_robodk_status(self, status: str) -> dict:
+        self.robodk_status = status
+        return self.current()
+
     def add_detection(self, is_defect: bool, color: str | None = None, part_id: str | None = None) -> dict:
         self.total += 1
         result = "defect" if is_defect else "normal"
