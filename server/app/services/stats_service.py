@@ -16,53 +16,45 @@ class StatsService:
         self.normal_count = 0
         self.defect_bin_load = 0
         self.completed_missions = 0
-        self.emergency_stop_active = False
         self.system_status = "STOPPED"
         self.conveyor_status = "OFF"
         self.robodk_status = "MOCK"
         self.agv_status = "IDLE"
         self.current_mission_id: str | None = None
+        self.agv_waypoint_index: int | None = None
+        self.agv_waypoint_total: int | None = None
+        self.agv_position: dict[str, float] | None = None
+        self.agv_message = ""
         self.recent_detections: list[dict] = []
         self._mission_running = False
         return self.current()
 
     def start_simulation(self) -> dict:
-        if not self.emergency_stop_active:
-            self.system_status = "RUNNING"
-            self.conveyor_status = "ON"
+        self.system_status = "RUNNING"
+        self.conveyor_status = "ON"
         return self.current()
 
     def pause_simulation(self) -> dict:
-        if not self.emergency_stop_active:
-            self.system_status = "PAUSED"
-            self.conveyor_status = "PAUSED"
+        self.system_status = "PAUSED"
+        self.conveyor_status = "PAUSED"
         return self.current()
 
     def stop_simulation(self) -> dict:
-        if not self.emergency_stop_active:
-            self.system_status = "STOPPED"
-            self.conveyor_status = "OFF"
-        return self.current()
-
-    def reset_emergency_stop(self) -> dict:
-        self.emergency_stop_active = False
         self.system_status = "STOPPED"
         self.conveyor_status = "OFF"
-        return self.current()
-
-    def emergency_stop(self) -> dict:
-        self.emergency_stop_active = True
-        self.system_status = "EMERGENCY_STOP"
-        self.conveyor_status = "OFF"
-        self.agv_status = "EMERGENCY_STOP"
-        self._mission_running = False
         return self.current()
 
     def set_robodk_status(self, status: str) -> dict:
         self.robodk_status = status
         return self.current()
 
-    def add_detection(self, is_defect: bool, color: str | None = None, part_id: str | None = None) -> dict:
+    def add_detection(
+        self,
+        is_defect: bool,
+        color: str | None = None,
+        part_id: str | None = None,
+        allow_auto_dispatch: bool = True,
+    ) -> dict:
         self.total += 1
         result = "defect" if is_defect else "normal"
         if is_defect:
@@ -84,21 +76,18 @@ class StatsService:
         }
         self.recent_detections = [detection, *self.recent_detections][:12]
 
-        if self.should_dispatch_agv():
+        if allow_auto_dispatch and self.should_dispatch_agv():
             self.dispatch_agv()
         return self.current()
 
     def should_dispatch_agv(self) -> bool:
         return (
-            not self.emergency_stop_active
-            and not self._mission_running
+            not self._mission_running
             and self.agv_status == "IDLE"
             and self.defect_bin_load >= self.defect_threshold
         )
 
     def dispatch_agv(self, manual: bool = False) -> dict:
-        if self.emergency_stop_active:
-            return self.current()
         if self._mission_running:
             return self.current()
         if manual and self.defect_bin_load <= 0:
@@ -106,6 +95,46 @@ class StatsService:
         self._mission_running = True
         self.current_mission_id = f"mission_{self.completed_missions + 1:03d}"
         self.agv_status = "MOVING_TO_DEFECT_BIN"
+        self.agv_waypoint_index = None
+        self.agv_waypoint_total = None
+        self.agv_position = None
+        self.agv_message = "AGV mission dispatched."
+        return self.current()
+
+    def update_agv_state(
+        self,
+        *,
+        status: str,
+        message: str | None = None,
+        waypoint_index: int | None = None,
+        waypoint_total: int | None = None,
+        x: float | None = None,
+        y: float | None = None,
+        z: float | None = None,
+    ) -> dict:
+        if not self._mission_running and status not in {"IDLE", "COMPLETED"}:
+            self.dispatch_agv(manual=True)
+
+        if status == "COMPLETED":
+            self.completed_missions += 1
+            self.defect_bin_load = 0
+            self._mission_running = False
+            self.agv_status = "IDLE"
+        else:
+            self.agv_status = status
+            if status == "IDLE":
+                self._mission_running = False
+
+        self.agv_waypoint_index = waypoint_index
+        self.agv_waypoint_total = waypoint_total
+        if x is not None or y is not None or z is not None:
+            self.agv_position = {
+                "x": x if x is not None else 0.0,
+                "y": y if y is not None else 0.0,
+                "z": z if z is not None else 0.0,
+            }
+        if message is not None:
+            self.agv_message = message
         return self.current()
 
     async def run_agv_mission(self, callback: MissionCallback | None = None) -> dict:
@@ -122,21 +151,18 @@ class StatsService:
             "RETURNING_HOME",
             "COMPLETED",
         ]:
-            if self.emergency_stop_active:
-                break
             self.agv_status = status
             if callback:
                 await callback(self.agv_event())
             if self.agv_step_delay:
                 await asyncio.sleep(self.agv_step_delay)
 
-        if not self.emergency_stop_active:
-            self.completed_missions += 1
-            self.defect_bin_load = 0
-            self.agv_status = "IDLE"
-            self._mission_running = False
-            if callback:
-                await callback(self.agv_event())
+        self.completed_missions += 1
+        self.defect_bin_load = 0
+        self.agv_status = "IDLE"
+        self._mission_running = False
+        if callback:
+            await callback(self.agv_event())
         return self.current()
 
     async def finish_pending_agv_mission(self) -> dict:
@@ -157,8 +183,11 @@ class StatsService:
             "agv_status": self.agv_status,
             "current_mission_id": self.current_mission_id,
             "completed_missions": self.completed_missions,
+            "agv_waypoint_index": self.agv_waypoint_index,
+            "agv_waypoint_total": self.agv_waypoint_total,
+            "agv_position": self.agv_position,
+            "agv_message": self.agv_message,
             "recent_detections": self.recent_detections,
-            "emergency_stop_active": self.emergency_stop_active,
         }
 
     def status_event(self) -> dict:
@@ -172,6 +201,10 @@ class StatsService:
                 "status": self.agv_status,
                 "defect_bin_load": self.defect_bin_load,
                 "completed_missions": self.completed_missions,
+                "waypoint_index": self.agv_waypoint_index,
+                "waypoint_total": self.agv_waypoint_total,
+                "position": self.agv_position,
+                "message": self.agv_message,
             },
         }
 

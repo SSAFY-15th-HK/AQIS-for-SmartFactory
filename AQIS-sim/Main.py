@@ -4,9 +4,11 @@ import time
 import math
 import threading
 import json
+import uuid
 from urllib import request, error
 
 RDK = robolink.Robolink()
+SCRIPT_ID = f"robodk-{uuid.uuid4().hex}"
 
 # =========================================================
 # Web UI / FastAPI 연동 설정
@@ -14,9 +16,11 @@ RDK = robolink.Robolink()
 # FastAPI 서버를 WSL 또는 Windows에서 실행한 뒤 주소를 맞추면 됨.
 # 보통 같은 PC에서 실행하면 http://localhost:8000 사용.
 API_BASE = "http://localhost:8000"
-API_TIMEOUT = 1.0
+API_TIMEOUT = 0.3
 ENABLE_WEB_UI_SYNC = True
 COMMAND_POLL_DT = 0.25
+RENDER_MIN_DT = 0.08
+WEB_STATUS_MIN_DT = 0.5
 
 # =========================================================
 # RoboDK 아이템 이름
@@ -109,6 +113,9 @@ red_box = boxes["Red"]
 
 # 병렬 실행 시 RoboDK API 충돌 방지용 Lock
 RDK_LOCK = threading.RLock()
+LAST_RENDER_AT = 0.0
+LAST_STATUS_SENT_AT = 0.0
+LAST_STATUS_PAYLOAD = None
 
 # 같은 Python 스크립트 안의 공정 분기에는 RoboDK Param보다 로컬 상태를 우선 사용.
 # 일부 RoboDK 실행 환경에서 RDK.setParam("KEY", "1") 후 RDK.getParam("KEY")가
@@ -123,6 +130,7 @@ STATE = {
     "reset_requested": False,
     "last_command": None,
 }
+DETECTED_NAMES = set()
 
 # =========================================================
 # Web UI 연동 유틸
@@ -169,8 +177,11 @@ def api_get(path, log_fail=True):
     return api_request("GET", path, None, log_fail=log_fail)
 
 
-def notify_web_status(stage, message="", running=True, red_x=None):
+def notify_web_status(stage, message="", running=True, red_x=None, force=False):
+    global LAST_STATUS_PAYLOAD, LAST_STATUS_SENT_AT
+
     payload = {
+        "script_id": SCRIPT_ID,
         "connected": True,
         "running": running,
         "stage": stage,
@@ -178,12 +189,24 @@ def notify_web_status(stage, message="", running=True, red_x=None):
     }
     if red_x is not None:
         payload["red_x"] = red_x
+
+    now = time.monotonic()
+    with RDK_LOCK:
+        if (
+            not force
+            and payload == LAST_STATUS_PAYLOAD
+            and now - LAST_STATUS_SENT_AT < WEB_STATUS_MIN_DT
+        ):
+            return
+        LAST_STATUS_PAYLOAD = payload.copy()
+        LAST_STATUS_SENT_AT = now
+
     api_post("/api/robodk/status", payload)
 
 
 def notify_web_reset():
     print("[WEB_UI] RoboDK Reset 상태 전송")
-    notify_web_status("RESET", "RoboDK scene reset", running=False)
+    notify_web_status("RESET", "RoboDK scene reset", running=False, force=True)
 
 
 def notify_web_detection(color_name, x, result):
@@ -197,20 +220,47 @@ def notify_web_detection(color_name, x, result):
             "color": color,
             "result": result,
             "source": "robodk",
+            "script_id": SCRIPT_ID,
             "confidence": 0.99 if is_defect else 0.96,
             "x": x,
         },
     )
 
 
+def mark_detected_once(name):
+    with RDK_LOCK:
+        if name in DETECTED_NAMES:
+            return False
+        DETECTED_NAMES.add(name)
+        return True
+
+
 def notify_web_agv_dispatch():
     print("[WEB_UI] AGV Dispatch 이벤트 전송")
-    api_post("/api/sim/agv/dispatch")
+    api_post("/api/sim/agv/dispatch", {"source": "robodk", "script_id": SCRIPT_ID})
+
+
+def notify_web_agv_state(status, message="", waypoint_index=None, waypoint_total=None, position=None):
+    payload = {
+        "source": "robodk",
+        "script_id": SCRIPT_ID,
+        "status": status,
+        "message": message,
+    }
+    if waypoint_index is not None:
+        payload["waypoint_index"] = waypoint_index
+    if waypoint_total is not None:
+        payload["waypoint_total"] = waypoint_total
+    if position is not None:
+        payload["x"] = position[0]
+        payload["y"] = position[1]
+        payload["z"] = position[2]
+    api_post("/api/sim/agv/state", payload)
 
 
 def notify_web_stop():
     print("[WEB_UI] RoboDK Stop 상태 전송")
-    notify_web_status("STOPPED", "RoboDK sequence stopped", running=False)
+    notify_web_status("STOPPED", "RoboDK sequence stopped", running=False, force=True)
 
 
 def apply_command(command):
@@ -235,7 +285,7 @@ def apply_command(command):
 
 
 def poll_web_command_once(log_fail=False):
-    data = api_get("/api/robodk/command", log_fail=log_fail)
+    data = api_get(f"/api/robodk/command?script_id={SCRIPT_ID}", log_fail=log_fail)
     if isinstance(data, dict):
         apply_command(data.get("command"))
 
@@ -253,7 +303,6 @@ def command_listener_worker():
 
 def wait_if_paused_or_interrupted():
     while True:
-        poll_web_command_once(log_fail=False)
         with RDK_LOCK:
             if STATE["stop_requested"]:
                 raise StopRequested()
@@ -275,7 +324,7 @@ def controlled_sleep(seconds):
 
 def wait_for_web_start_command():
     print("[WEB_UI] Web UI에서 Simulation Start를 누를 때까지 대기합니다.")
-    notify_web_status("READY", "Waiting for Web UI START", running=False)
+    notify_web_status("READY", "Waiting for Web UI START", running=False, force=True)
     while True:
         poll_web_command_once(log_fail=True)
         with RDK_LOCK:
@@ -340,9 +389,15 @@ def move_box_local_x(box, dx):
         box.setPose(TxyzRxyz_2_Pose(xyz))
 
 
-def safe_render():
+def safe_render(force=False):
+    global LAST_RENDER_AT
+
+    now = time.monotonic()
     with RDK_LOCK:
+        if not force and now - LAST_RENDER_AT < RENDER_MIN_DT:
+            return
         RDK.Render()
+        LAST_RENDER_AT = now
 
 # =========================================================
 # 초기화
@@ -411,6 +466,7 @@ def reset_scene():
         STATE["conveyor_done"] = False
         STATE["stop_requested"] = False
         STATE["reset_requested"] = False
+        DETECTED_NAMES.clear()
         RDK.setParam("RED_DETECTED", "0")
         RDK.setParam("LOAD_READY", "0")
         RDK.setParam("AGV_DONE", "0")
@@ -427,8 +483,6 @@ def conveyor_until_red_detect():
     notify_web_status("CONVEYOR", "Conveyor moving and vision detection active", running=True)
 
     active_names = BOX_NAMES[:]
-    detected_names = set()
-
     while True:
         wait_if_paused_or_interrupted()
         # 컨베이어 위 활성 박스들을 계속 이동. 200mm 단위 정지가 아니라 연속 이동.
@@ -439,11 +493,8 @@ def conveyor_until_red_detect():
         controlled_sleep(CONVEYOR_DT)
 
         for name in active_names:
-            if name in detected_names:
-                continue
             x = get_local_x(boxes[name])
-            if x >= DETECT_X - DETECT_TOL:
-                detected_names.add(name)
+            if x >= DETECT_X - DETECT_TOL and mark_detected_once(name):
                 if name == "Red":
                     print(f"[DETECT] Red 불량 감지됨. Red X = {x:.1f}")
                     print("[CONVEYOR] Red pick을 위해 컨베이어 정지")
@@ -559,7 +610,8 @@ def detach_and_fall(name):
 
         with RDK_LOCK:
             box.setPoseAbs(TxyzRxyz_2_Pose(xyz))
-            RDK.Render()
+
+        safe_render()
 
         controlled_sleep(FALL_DT)
 
@@ -585,6 +637,10 @@ def conveyor_rest_worker():
 
         for name in active_names:
             x = get_local_x(boxes[name])
+            if x >= DETECT_X - DETECT_TOL and mark_detected_once(name):
+                print(f"[DETECT] {name} 정상 감지됨. X = {x:.1f}")
+                notify_web_detection(name, x, "normal")
+
             if x >= RELEASE_X:
                 arrived.append(name)
 
@@ -621,9 +677,13 @@ def move_smooth_abs(item, target_pose, speed=350, dt=0.03):
 
         with RDK_LOCK:
             item.setPoseAbs(TxyzRxyz_2_Pose(now))
-            RDK.Render()
+
+        safe_render()
 
         controlled_sleep(dt)
+
+    with RDK_LOCK:
+        return Pose_2_TxyzRxyz(item.PoseAbs())
 
 # =========================================================
 # 병렬 작업 2: TurtleBot이 불량 저장 위치로 이동
@@ -640,6 +700,13 @@ def agv_to_defect_storage_worker():
         return
 
     print("[AGV] Red 적재 확인. 불량 저장 위치로 이동 시작")
+    notify_web_agv_state(
+        "MOVING_TO_DEFECT_BIN",
+        "TurtleBot started moving to defect storage.",
+        waypoint_index=0,
+        waypoint_total=len(DEFECT_STORAGE_PATH),
+        position=AGV_START,
+    )
 
     current = AGV_START
 
@@ -652,13 +719,27 @@ def agv_to_defect_storage_worker():
             f"X={wp[0]}, Y={wp[1]}, Z={wp[2]}, Yaw={yaw:.1f}"
         )
 
-        move_smooth_abs(turtle_base, target_pose, speed=AGV_SPEED, dt=AGV_DT)
+        final_pose = move_smooth_abs(turtle_base, target_pose, speed=AGV_SPEED, dt=AGV_DT)
+        notify_web_agv_state(
+            "MOVING_TO_DEFECT_BIN",
+            f"TurtleBot reached waypoint {idx + 1}/{len(DEFECT_STORAGE_PATH)}.",
+            waypoint_index=idx + 1,
+            waypoint_total=len(DEFECT_STORAGE_PATH),
+            position=final_pose[:3],
+        )
         current = wp
 
     with RDK_LOCK:
         STATE["agv_done"] = True
         RDK.setParam("AGV_DONE", "1")
 
+    notify_web_agv_state(
+        "COMPLETED",
+        "TurtleBot arrived at defect storage.",
+        waypoint_index=len(DEFECT_STORAGE_PATH),
+        waypoint_total=len(DEFECT_STORAGE_PATH),
+        position=DEFECT_STORAGE_PATH[-1],
+    )
     print("[AGV] 불량 저장 위치 도착. AGV_DONE = 1")
 
 # =========================================================
@@ -668,14 +749,27 @@ def run_parallel_agv_and_conveyor():
     print("\n========== 4. Parallel Process Start ==========")
     print("[PARALLEL] TurtleBot 이동과 컨베이어 이동을 동시에 실행합니다.")
 
-    agv_thread = threading.Thread(target=agv_to_defect_storage_worker, name="AGVThread")
-    conveyor_thread = threading.Thread(target=conveyor_rest_worker, name="ConveyorThread")
+    errors = []
+
+    def run_worker(worker):
+        try:
+            worker()
+        except Exception as exc:
+            with RDK_LOCK:
+                errors.append(exc)
+                STATE["stop_requested"] = True
+
+    agv_thread = threading.Thread(target=run_worker, args=(agv_to_defect_storage_worker,), name="AGVThread")
+    conveyor_thread = threading.Thread(target=run_worker, args=(conveyor_rest_worker,), name="ConveyorThread")
 
     agv_thread.start()
     conveyor_thread.start()
 
     agv_thread.join()
     conveyor_thread.join()
+
+    if errors:
+        raise errors[0]
 
     print("[PARALLEL] TurtleBot 이동과 컨베이어 이동 모두 완료")
 

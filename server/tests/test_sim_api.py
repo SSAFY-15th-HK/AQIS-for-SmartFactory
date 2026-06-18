@@ -21,7 +21,7 @@ def test_sim_detection_triggers_agv_and_text_command_status():
     assert current["defect_bin_load"] == 3
     assert current["agv_status"] in {"MOVING_TO_DEFECT_BIN", "IDLE"}
 
-    command = client.post("/api/text-command", json={"text": "현재 불량률 알려줘"}).json()
+    command = client.post("/api/text-command", json={"text": "defect rate"}).json()
     assert command["intent"] == "QUERY_DEFECT_RATE"
     assert "100.0%" in command["message"]
 
