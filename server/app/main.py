@@ -34,6 +34,14 @@ class SimDetectionRequest(BaseModel):
     confidence: float | None = None
 
 
+class RoboDKStatusRequest(BaseModel):
+    connected: bool | None = None
+    running: bool | None = None
+    stage: str | None = None
+    message: str | None = None
+    red_x: float | None = None
+
+
 class TextCommandRequest(BaseModel):
     text: str
 
@@ -57,11 +65,24 @@ def sim_status_event() -> dict:
     return stats_service.status_event()
 
 
+def robodk_status_event() -> dict:
+    return {"type": "robodk_status", "data": robodk.status()}
+
+
+def apply_robodk_status_to_stats(status: dict) -> None:
+    if status.get("running"):
+        stats_service.set_robodk_status("RUNNING")
+    elif status.get("connected"):
+        stats_service.set_robodk_status("CONNECTED")
+    else:
+        stats_service.set_robodk_status("DISCONNECTED")
+
+
 async def broadcast_current_status() -> None:
     await manager.broadcast(system_status_event())
     await manager.broadcast(sim_status_event())
     await manager.broadcast({"type": "conveyor_status", "data": conveyor.status()})
-    await manager.broadcast({"type": "robodk_status", "data": robodk.status()})
+    await manager.broadcast(robodk_status_event())
 
 
 async def run_agv_mission_background() -> None:
@@ -108,6 +129,22 @@ def health() -> dict:
     }
 
 
+@app.get("/api/robodk/command")
+def robodk_command() -> dict:
+    """Polled by the RoboDK Python script. Reading consumes the pending command."""
+    return {"command": robodk.consume_command()}
+
+
+@app.post("/api/robodk/status")
+async def update_robodk_status(payload: RoboDKStatusRequest) -> dict:
+    status = robodk.update_status(**payload.model_dump())
+    apply_robodk_status_to_stats(status)
+    event = robodk_status_event()
+    await manager.broadcast(event)
+    await manager.broadcast(sim_status_event())
+    return {"status": "ok", "data": {**status, "robodk_status": stats_service.current()["robodk_status"]}}
+
+
 @app.get("/api/stats/current")
 def current_stats() -> dict:
     return stats_service.current()
@@ -124,7 +161,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.send_json(system_status_event())
     await websocket.send_json(sim_status_event())
     await websocket.send_json({"type": "conveyor_status", "data": conveyor.status()})
-    await websocket.send_json({"type": "robodk_status", "data": robodk.status()})
+    await websocket.send_json(robodk_status_event())
     try:
         while True:
             await websocket.receive_text()
@@ -134,7 +171,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 @app.post("/api/sim/start")
 async def start_simulation() -> dict:
-    robodk.start_simulation()
+    apply_robodk_status_to_stats(robodk.start_simulation())
     conveyor.start()
     event = {"type": "sim_status", "data": stats_service.start_simulation()}
     await broadcast_current_status()
@@ -143,7 +180,7 @@ async def start_simulation() -> dict:
 
 @app.post("/api/sim/pause")
 async def pause_simulation() -> dict:
-    robodk.pause_simulation()
+    apply_robodk_status_to_stats(robodk.pause_simulation())
     conveyor.stop()
     event = {"type": "sim_status", "data": stats_service.pause_simulation()}
     await broadcast_current_status()
@@ -152,7 +189,7 @@ async def pause_simulation() -> dict:
 
 @app.post("/api/sim/stop")
 async def stop_simulation() -> dict:
-    robodk.stop_simulation()
+    apply_robodk_status_to_stats(robodk.stop_simulation())
     conveyor.stop()
     event = {"type": "sim_status", "data": stats_service.stop_simulation()}
     await broadcast_current_status()
@@ -161,9 +198,9 @@ async def stop_simulation() -> dict:
 
 @app.post("/api/sim/reset")
 async def reset_simulation() -> dict:
-    robodk.reset_simulation()
     conveyor.stop()
     event = {"type": "sim_status", "data": stats_service.reset_all()}
+    apply_robodk_status_to_stats(robodk.reset_simulation())
     await broadcast_current_status()
     return event
 
@@ -191,7 +228,7 @@ async def create_sim_detection(payload: SimDetectionRequest) -> dict:
 @app.post("/api/sim/agv/dispatch")
 async def dispatch_agv() -> dict:
     before_status = stats_service.current()["agv_status"]
-    robodk.dispatch_agv()
+    apply_robodk_status_to_stats(robodk.dispatch_agv())
     stats_service.dispatch_agv(manual=True)
     await manager.broadcast(stats_service.agv_event())
     await manager.broadcast(sim_status_event())
@@ -211,27 +248,27 @@ async def text_command(payload: TextCommandRequest) -> dict:
     before_status = stats_service.current()["agv_status"]
 
     if intent == "START_SIM":
-        robodk.start_simulation()
+        apply_robodk_status_to_stats(robodk.start_simulation())
         conveyor.start()
         stats_service.start_simulation()
     elif intent == "PAUSE_SIM":
-        robodk.pause_simulation()
+        apply_robodk_status_to_stats(robodk.pause_simulation())
         conveyor.stop()
         stats_service.pause_simulation()
     elif intent == "STOP_SIM":
-        robodk.stop_simulation()
+        apply_robodk_status_to_stats(robodk.stop_simulation())
         conveyor.stop()
         stats_service.stop_simulation()
     elif intent == "RESET_SIM":
-        robodk.reset_simulation()
-        conveyor.stop()
         stats_service.reset_all()
+        apply_robodk_status_to_stats(robodk.reset_simulation())
+        conveyor.stop()
     elif intent == "EMERGENCY_STOP":
-        robodk.stop_simulation()
+        apply_robodk_status_to_stats(robodk.stop_simulation())
         conveyor.stop()
         stats_service.emergency_stop()
     elif intent == "DISPATCH_AGV" and parsed["action_executed"]:
-        robodk.dispatch_agv()
+        apply_robodk_status_to_stats(robodk.dispatch_agv())
         stats_service.dispatch_agv(manual=True)
         schedule_agv_if_needed(before_status)
 
@@ -277,13 +314,14 @@ async def stop_conveyor() -> dict:
 
 @app.post("/api/emergency_stop")
 async def emergency_stop() -> dict:
-    robodk.stop_simulation()
+    apply_robodk_status_to_stats(robodk.stop_simulation())
     conveyor.stop()
     stats_service.emergency_stop()
     events = [
         {"type": "conveyor_status", "data": conveyor.status()},
         system_status_event(),
         sim_status_event(),
+        robodk_status_event(),
     ]
     for event in events:
         await manager.broadcast(event)

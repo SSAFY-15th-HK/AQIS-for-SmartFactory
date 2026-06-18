@@ -104,6 +104,17 @@ export default function App() {
         setSorterPosition(String(event.data.sorter_position ?? "normal"));
       }
 
+      if (event.type === "robodk_status") {
+        setStats((prev) => ({
+          ...prev,
+          robodk_status: event.data.connected
+            ? event.data.running
+              ? "RUNNING"
+              : "CONNECTED"
+            : "DISCONNECTED",
+        }));
+      }
+
       if (event.type === "agv_mission") {
         setStats((prev) => ({
           ...prev,
@@ -245,11 +256,13 @@ export default function App() {
         </article>
 
         <article className="panel">
-          <h2>Mock / Demo Events</h2>
+          <h2>Detection Events</h2>
+          <p className="muted">RoboDK가 보내는 정상/불량 검출과 같은 API를 수동으로 테스트합니다.</p>
           <div className="buttons">
-            <button disabled={pending} onClick={() => post("/api/mock/detection")}>Mock Detection</button>
+            <button disabled={pending} onClick={() => post("/api/mock/detection")}>Random Detection</button>
             <button disabled={pending} onClick={() => post("/api/mock/detection?color=red")}>Red Defect</button>
-            <button disabled={pending} onClick={() => post("/api/sim/detection", { color: "blue", result: "normal", source: "ui" })}>Normal Part</button>
+            <button disabled={pending} onClick={() => post("/api/sim/detection", { part_id: "ui_blue_normal", color: "blue", result: "normal", source: "ui" })}>Blue Normal</button>
+            <button disabled={pending} onClick={() => post("/api/sim/detection", { part_id: "ui_yellow_normal", color: "yellow", result: "normal", source: "ui" })}>Yellow Normal</button>
             <button disabled={pending} onClick={runDemoSequence}>Run Demo Sequence</button>
             <button disabled={pending} onClick={() => post("/api/sim/agv/dispatch")}>AGV Dispatch</button>
           </div>
