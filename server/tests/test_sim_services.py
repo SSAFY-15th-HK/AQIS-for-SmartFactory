@@ -22,20 +22,20 @@ def test_defect_bin_load_triggers_agv_then_resets_after_mission():
     assert current["agv_status"] == "IDLE"
 
 
-def test_text_command_maps_korean_commands_to_intents_and_messages():
+def test_text_command_maps_commands_to_intents_and_messages():
     stats = StatsService(defect_threshold=3, agv_step_delay=0)
     stats.add_detection(is_defect=False, color="blue")
     stats.add_detection(is_defect=True, color="red")
     service = TextCommandService(stats)
 
-    status = service.parse("현재 상태 알려줘")
-    defect_rate = service.parse("불량률 알려줘")
-    dispatch = service.parse("불량품 비워줘")
-    emergency = service.parse("비상 정지")
+    status = service.parse("status")
+    defect_rate = service.parse("defect rate")
+    dispatch = service.parse("agv")
+    stop = service.parse("stop")
 
     assert status["intent"] == "QUERY_STATUS"
     assert "RUNNING" not in status["message"]
     assert defect_rate["intent"] == "QUERY_DEFECT_RATE"
     assert "50.0%" in defect_rate["message"]
     assert dispatch["intent"] == "DISPATCH_AGV"
-    assert emergency["intent"] == "EMERGENCY_STOP"
+    assert stop["intent"] == "STOP_SIM"

@@ -1,8 +1,16 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useState } from "react";
 
 type AqisEvent = {
   type: string;
   data: Record<string, any>;
+};
+
+type Detection = {
+  part_id?: string;
+  color?: string;
+  result?: string;
+  is_defect?: boolean;
+  session_total?: number;
 };
 
 type SimStats = {
@@ -18,17 +26,25 @@ type SimStats = {
   agv_status: string;
   current_mission_id: string | null;
   completed_missions: number;
-  emergency_stop_active: boolean;
-};
-
-type TextMessage = {
-  user: string;
-  assistant: string;
-  intent: string;
+  agv_waypoint_index: number | null;
+  agv_waypoint_total: number | null;
+  agv_position: { x: number; y: number; z: number } | null;
+  agv_message: string;
+  recent_detections: Detection[];
 };
 
 const API_BASE = "http://localhost:8000";
 const WS_URL = "ws://localhost:8000/ws";
+
+const CONVEYOR_VIEW = {
+  flowDuration: 16,
+  parts: [
+    { name: "yellow", startLeft: "10%" },
+    { name: "red", startLeft: "24%" },
+    { name: "green", startLeft: "38%" },
+    { name: "blue", startLeft: "52%" },
+  ],
+};
 
 const initialStats: SimStats = {
   system_status: "STOPPED",
@@ -43,28 +59,44 @@ const initialStats: SimStats = {
   agv_status: "IDLE",
   current_mission_id: null,
   completed_missions: 0,
-  emergency_stop_active: false,
+  agv_waypoint_index: null,
+  agv_waypoint_total: null,
+  agv_position: null,
+  agv_message: "",
+  recent_detections: [],
 };
 
 function percent(value: number): string {
   return `${Math.round(value * 1000) / 10}%`;
 }
 
-function statusClass(status: string): string {
-  if (status.includes("EMERGENCY")) return "dangerText";
-  if (status === "RUNNING" || status === "IDLE" || status === "CONNECTED" || status === "MOCK") return "okText";
-  if (status === "PAUSED") return "warnText";
-  return "mutedText";
+function statusTone(status: string): string {
+  if (status === "DISCONNECTED") return "danger";
+  if (status === "PAUSED" || status.includes("RESET")) return "warn";
+  if (["RUNNING", "CONNECTED", "ON", "IDLE", "MOVING_TO_DEFECT_BIN"].includes(status)) return "ok";
+  return "muted";
+}
+
+function colorName(color?: string): string {
+  if (!color) return "unknown";
+  return color.charAt(0).toUpperCase() + color.slice(1);
+}
+
+function partStyle(startLeft: string): CSSProperties & Record<string, string> {
+  return {
+    "--start-left": startLeft,
+    "--flow-duration": `${CONVEYOR_VIEW.flowDuration}s`,
+  };
 }
 
 export default function App() {
   const [connected, setConnected] = useState(false);
   const [events, setEvents] = useState<AqisEvent[]>([]);
   const [stats, setStats] = useState<SimStats>(initialStats);
-  const [mode, setMode] = useState<Record<string, string>>({});
   const [sorterPosition, setSorterPosition] = useState("normal");
-  const [command, setCommand] = useState("");
-  const [messages, setMessages] = useState<TextMessage[]>([]);
+  const [robodkStage, setRobodkStage] = useState("IDLE");
+  const [robodkMessage, setRobodkMessage] = useState("RoboDK script has not reported yet.");
+  const [flowResetKey, setFlowResetKey] = useState(0);
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
@@ -76,9 +108,9 @@ export default function App() {
 
     ws.onmessage = (message) => {
       const event = JSON.parse(message.data) as AqisEvent;
-      setEvents((prev) => [event, ...prev].slice(0, 16));
+      setEvents((prev) => [event, ...prev].slice(0, 10));
 
-      if (event.type === "sim_status") {
+      if (event.type === "sim_status" || event.type === "system_status") {
         setStats((prev) => ({ ...prev, ...(event.data as Partial<SimStats>) }));
       }
 
@@ -95,16 +127,14 @@ export default function App() {
         }));
       }
 
-      if (event.type === "system_status") {
-        setMode((event.data.mode ?? {}) as Record<string, string>);
-        setStats((prev) => ({ ...prev, ...(event.data as Partial<SimStats>) }));
-      }
-
       if (event.type === "conveyor_status") {
         setSorterPosition(String(event.data.sorter_position ?? "normal"));
       }
 
       if (event.type === "robodk_status") {
+        const nextStage = String(event.data.stage ?? "IDLE");
+        setRobodkStage(nextStage);
+        setRobodkMessage(String(event.data.message ?? ""));
         setStats((prev) => ({
           ...prev,
           robodk_status: event.data.connected
@@ -122,18 +152,11 @@ export default function App() {
           defect_bin_load: Number(event.data.defect_bin_load ?? prev.defect_bin_load),
           completed_missions: Number(event.data.completed_missions ?? prev.completed_missions),
           current_mission_id: (event.data.mission_id as string | null) ?? prev.current_mission_id,
+          agv_waypoint_index: event.data.waypoint_index ?? prev.agv_waypoint_index,
+          agv_waypoint_total: event.data.waypoint_total ?? prev.agv_waypoint_total,
+          agv_position: event.data.position ?? prev.agv_position,
+          agv_message: String(event.data.message ?? prev.agv_message),
         }));
-      }
-
-      if (event.type === "text_command") {
-        setMessages((prev) => [
-          {
-            user: String(event.data.user_text ?? ""),
-            assistant: String(event.data.assistant_message ?? event.data.message ?? ""),
-            intent: String(event.data.intent ?? "UNKNOWN"),
-          },
-          ...prev,
-        ].slice(0, 6));
       }
     };
 
@@ -144,6 +167,28 @@ export default function App() {
     () => stats.normal_count || Math.max(stats.session_total - stats.session_defects, 0),
     [stats.normal_count, stats.session_total, stats.session_defects],
   );
+
+  const agvProgress = useMemo(() => {
+    if (!stats.agv_waypoint_total) return 0;
+    return Math.min(100, ((stats.agv_waypoint_index ?? 0) / stats.agv_waypoint_total) * 100);
+  }, [stats.agv_waypoint_index, stats.agv_waypoint_total]);
+
+  const binProgress = Math.min(100, (stats.defect_bin_load / Math.max(stats.defect_threshold, 1)) * 100);
+  const conveyorParts = CONVEYOR_VIEW.parts;
+  const isRunning = stats.system_status === "RUNNING";
+  const isPaused = stats.system_status === "PAUSED";
+  const isStopped = stats.system_status === "STOPPED";
+  const processClass = isRunning ? "running" : isPaused ? "paused" : "stopped";
+  const lastEvent = events[0];
+  const lastEventText = lastEvent
+    ? String(lastEvent.data.stage ?? lastEvent.data.status ?? lastEvent.data.result ?? lastEvent.data.message ?? "-")
+    : "No event";
+  const statusItems = [
+    ["System", stats.system_status],
+    ["RoboDK", stats.robodk_status],
+    ["Conveyor", stats.conveyor_status],
+    ["TurtleBot", stats.agv_status],
+  ];
 
   async function post(path: string, body?: unknown) {
     setPending(true);
@@ -159,171 +204,179 @@ export default function App() {
     }
   }
 
-  async function sendTextCommand(event: FormEvent) {
-    event.preventDefault();
-    const text = command.trim();
-    if (!text) return;
-    setCommand("");
-    const result = await post("/api/text-command", { text });
-    setMessages((prev) => [
-      { user: text, assistant: String(result.message ?? ""), intent: String(result.intent ?? "UNKNOWN") },
-      ...prev,
-    ].slice(0, 6));
-  }
-
-  async function runDemoSequence() {
-    const sequence = [
-      { part_id: "part_001", color: "blue", result: "normal" },
-      { part_id: "part_002", color: "green", result: "normal" },
-      { part_id: "part_003", color: "red", result: "defect" },
-      { part_id: "part_004", color: "yellow", result: "normal" },
-      { part_id: "part_005", color: "red", result: "defect" },
-      { part_id: "part_006", color: "red", result: "defect" },
-    ];
-    for (const item of sequence) {
-      await post("/api/sim/detection", { ...item, source: "ui_demo" });
-    }
+  async function resetFlow() {
+    await post("/api/sim/reset");
+    setFlowResetKey((prev) => prev + 1);
   }
 
   return (
     <main className="page">
-      <section className="hero">
+      <header className="topbar">
         <div>
-          <p className="eyebrow">AQIS Smart Factory</p>
-          <h1>RoboDK Digital Twin Dashboard</h1>
-          <p className="description">
-            UI 버튼과 텍스트 명령으로 시뮬레이션을 제어하고, 불량품 3개 누적 시 AGV 출동 미션을 자동 실행하는 대시보드입니다.
-          </p>
+          <p className="eyebrow">AQIS Monitoring</p>
+          <h1>RoboDK 공정 모니터링</h1>
         </div>
-        <div className="statusBox">
-          <span className={connected ? "dot ok" : "dot bad"} />
-          WebSocket: {connected ? "Connected" : "Disconnected"}
+        <div className={`connection ${connected ? "ok" : "danger"}`}>
+          <span />
+          {connected ? "Live" : "Offline"}
+        </div>
+      </header>
+
+      <section className="controlBar" aria-label="simulation controls">
+        <button disabled={pending} className={isRunning ? "active" : ""} onClick={() => post("/api/sim/start")}>Start</button>
+        <button disabled={pending} className={`secondary ${isPaused ? "active" : ""}`} onClick={() => post("/api/sim/pause")}>Pause</button>
+        <button disabled={pending} className={`secondary ${isStopped ? "active" : ""}`} onClick={() => post("/api/sim/stop")}>Stop</button>
+        <button disabled={pending} className="secondary" onClick={resetFlow}>Reset</button>
+      </section>
+
+      <section className={`activityStrip ${processClass}`}>
+        <div>
+          <span>Current</span>
+          <strong>{stats.system_status}</strong>
+        </div>
+        <div>
+          <span>Last Event</span>
+          <strong>{lastEvent ? lastEvent.type : "none"}</strong>
+          <small>{lastEventText}</small>
+        </div>
+        <div>
+          <span>Network</span>
+          <strong>{connected ? "CONNECTED" : "OFFLINE"}</strong>
         </div>
       </section>
 
-      <section className="grid statusGrid">
-        <article className="statusCard">
-          <span>System</span>
-          <strong className={statusClass(stats.system_status)}>{stats.system_status}</strong>
-        </article>
-        <article className="statusCard">
-          <span>Conveyor</span>
-          <strong className={statusClass(stats.conveyor_status)}>{stats.conveyor_status}</strong>
-        </article>
-        <article className="statusCard">
-          <span>RoboDK</span>
-          <strong className={statusClass(stats.robodk_status)}>{stats.robodk_status}</strong>
-        </article>
-        <article className="statusCard">
-          <span>AGV</span>
-          <strong className={statusClass(stats.agv_status)}>{stats.agv_status}</strong>
-        </article>
+      <section className="statusGrid">
+        {statusItems.map(([label, value]) => (
+          <article className={`statusTile ${statusTone(value)}`} key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </article>
+        ))}
       </section>
 
-      <section className="grid cards">
-        <article className="card">
-          <h2>총 검사 수</h2>
-          <strong>{stats.session_total}</strong>
-        </article>
-        <article className="card">
-          <h2>정상 수</h2>
-          <strong>{normalCount}</strong>
-        </article>
-        <article className="card danger">
-          <h2>불량 수</h2>
-          <strong>{stats.session_defects}</strong>
-        </article>
-        <article className="card">
-          <h2>불량률</h2>
-          <strong>{percent(stats.defect_rate)}</strong>
-        </article>
-      </section>
-
-      <section className="grid two">
-        <article className="panel">
-          <h2>Simulation Controls</h2>
-          <div className="buttons">
-            <button disabled={pending} onClick={() => post("/api/sim/start")}>Simulation Start</button>
-            <button disabled={pending} className="secondary" onClick={() => post("/api/sim/pause")}>Pause</button>
-            <button disabled={pending} className="secondary" onClick={() => post("/api/sim/stop")}>Stop</button>
-            <button disabled={pending} className="secondary" onClick={() => post("/api/sim/reset")}>Reset</button>
-            <button disabled={pending} className="stop" onClick={() => post("/api/emergency_stop")}>Emergency STOP</button>
+      <section className="mainGrid">
+        <article className={`panel processPanel ${processClass}`}>
+          <div className="panelHeader">
+            <h2>공정 상태</h2>
+            <span className={`stage ${statusTone(robodkStage)}`}>{robodkStage}</span>
           </div>
-          <div className={`belt ${stats.conveyor_status === "ON" ? "running" : ""}`}>
-            <span /> <span /> <span /> <span />
-          </div>
-          <p className="muted">Sorter Position: <b>{sorterPosition}</b></p>
-        </article>
 
-        <article className="panel">
-          <h2>Detection Events</h2>
-          <p className="muted">RoboDK가 보내는 정상/불량 검출과 같은 API를 수동으로 테스트합니다.</p>
-          <div className="buttons">
-            <button disabled={pending} onClick={() => post("/api/mock/detection")}>Random Detection</button>
-            <button disabled={pending} onClick={() => post("/api/mock/detection?color=red")}>Red Defect</button>
-            <button disabled={pending} onClick={() => post("/api/sim/detection", { part_id: "ui_blue_normal", color: "blue", result: "normal", source: "ui" })}>Blue Normal</button>
-            <button disabled={pending} onClick={() => post("/api/sim/detection", { part_id: "ui_yellow_normal", color: "yellow", result: "normal", source: "ui" })}>Yellow Normal</button>
-            <button disabled={pending} onClick={runDemoSequence}>Run Demo Sequence</button>
-            <button disabled={pending} onClick={() => post("/api/sim/agv/dispatch")}>AGV Dispatch</button>
-          </div>
-        </article>
-      </section>
-
-      <section className="grid two">
-        <article className="panel">
-          <h2>AGV Mission</h2>
-          <div className="missionMeter">
-            <div style={{ width: `${Math.min(100, (stats.defect_bin_load / stats.defect_threshold) * 100)}%` }} />
-          </div>
-          <dl className="modeList">
-            <div><dt>Defect Bin Load</dt><dd>{stats.defect_bin_load} / {stats.defect_threshold}</dd></div>
-            <div><dt>Mission ID</dt><dd>{stats.current_mission_id ?? "none"}</dd></div>
-            <div><dt>AGV Status</dt><dd>{stats.agv_status}</dd></div>
-            <div><dt>Completed</dt><dd>{stats.completed_missions}</dd></div>
-          </dl>
-        </article>
-
-        <article className="panel">
-          <h2>System Mode</h2>
-          <dl className="modeList">
-            <div><dt>Conveyor</dt><dd>{mode.conveyor ?? "mock"}</dd></div>
-            <div><dt>Vision</dt><dd>{mode.vision ?? "mock"}</dd></div>
-            <div><dt>Robot</dt><dd>{mode.robot ?? "mock"}</dd></div>
-            <div><dt>Voice</dt><dd>{mode.voice ?? "text"}</dd></div>
-          </dl>
-        </article>
-      </section>
-
-      <section className="panel">
-        <h2>Text Command</h2>
-        <form className="commandForm" onSubmit={sendTextCommand}>
-          <input
-            value={command}
-            onChange={(event) => setCommand(event.target.value)}
-            placeholder="예: 컨베이어 시작해줘 / 불량품 비워줘 / 현재 불량률 알려줘 / 비상 정지"
-          />
-          <button disabled={pending || !command.trim()} type="submit">Send</button>
-        </form>
-        <div className="messages">
-          {messages.length === 0 && <p className="muted">아직 텍스트 명령 이력이 없습니다.</p>}
-          {messages.map((message, index) => (
-            <div className="message" key={`${message.user}-${index}`}>
-              <p><b>User:</b> {message.user}</p>
-              <p><b>Assistant:</b> {message.assistant}</p>
-              <small>{message.intent}</small>
+          <div className={`factoryScene ${processClass}`}>
+            <div
+              className={`conveyor ${isRunning ? "running" : ""}`}
+              key={flowResetKey}
+            >
+              {conveyorParts.map((part) => (
+                <span
+                  className={`part ${part.name}`}
+                  key={part.name}
+                  style={partStyle(part.startLeft)}
+                  title={colorName(part.name)}
+                />
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+
+          <div className="processFooter">
+            <div>
+              <span>Conveyor</span>
+              <b className={statusTone(stats.conveyor_status)}>{stats.conveyor_status}</b>
+            </div>
+            <div>
+              <span>Sorter</span>
+              <b>{sorterPosition}</b>
+            </div>
+            <div>
+              <span>Message</span>
+              <b>{robodkMessage || stats.agv_message || "대기 중"}</b>
+            </div>
+          </div>
+        </article>
+
+        <article className="panel">
+          <div className="panelHeader">
+            <h2>검사 집계</h2>
+            <span className="stage muted">Total {stats.session_total}</span>
+          </div>
+          <div className="metricGrid">
+            <div>
+              <span>전체</span>
+              <strong>{stats.session_total}</strong>
+            </div>
+            <div>
+              <span>정상</span>
+              <strong>{normalCount}</strong>
+            </div>
+            <div>
+              <span>불량</span>
+              <strong className="danger">{stats.session_defects}</strong>
+            </div>
+            <div>
+              <span>불량률</span>
+              <strong>{percent(stats.defect_rate)}</strong>
+            </div>
+          </div>
+
+          <h3>최근 검사</h3>
+          <div className="detectionList">
+            {stats.recent_detections.length === 0 && <p className="empty">검사 이벤트 없음</p>}
+            {stats.recent_detections.slice(0, 5).map((item, index) => (
+              <div className="detectionRow" key={`${item.part_id ?? index}-${index}`}>
+                <span className={`colorDot ${item.color ?? "unknown"}`} />
+                <div>
+                  <strong>{item.part_id ?? `part_${item.session_total ?? index + 1}`}</strong>
+                  <small>{colorName(item.color)}</small>
+                </div>
+                <b className={item.is_defect || item.result === "defect" ? "danger" : "ok"}>
+                  {item.is_defect || item.result === "defect" ? "DEFECT" : "NORMAL"}
+                </b>
+              </div>
+            ))}
+          </div>
+        </article>
       </section>
 
-      <section className="panel">
-        <h2>Recent Events</h2>
-        <div className="events">
-          {events.length === 0 && <p className="muted">아직 이벤트가 없습니다.</p>}
-          {events.map((event, index) => (
-            <pre key={index}>{JSON.stringify(event, null, 2)}</pre>
-          ))}
-        </div>
+      <section className="lowerGrid">
+        <article className="panel">
+          <div className="panelHeader">
+            <h2>AGV 진행</h2>
+            <span className="stage muted">{stats.current_mission_id ?? "no mission"}</span>
+          </div>
+          <div className="progressBlock">
+            <div className="progressLabel">
+              <span>Waypoint</span>
+              <b>{stats.agv_waypoint_index ?? 0} / {stats.agv_waypoint_total ?? 0}</b>
+            </div>
+            <div className="progressTrack"><div style={{ width: `${agvProgress}%` }} /></div>
+          </div>
+          <div className="progressBlock">
+            <div className="progressLabel">
+              <span>Defect Bin</span>
+              <b>{stats.defect_bin_load} / {stats.defect_threshold}</b>
+            </div>
+            <div className="progressTrack bin"><div style={{ width: `${binProgress}%` }} /></div>
+          </div>
+          <dl className="detailList">
+            <div><dt>완료 미션</dt><dd>{stats.completed_missions}</dd></div>
+            <div><dt>위치</dt><dd>{stats.agv_position ? `${Math.round(stats.agv_position.x)}, ${Math.round(stats.agv_position.y)}` : "-"}</dd></div>
+          </dl>
+        </article>
+
+        <article className="panel">
+          <div className="panelHeader">
+            <h2>이벤트 로그</h2>
+            <span className="stage muted">{events.length}</span>
+          </div>
+          <div className="eventList">
+            {events.length === 0 && <p className="empty">이벤트 없음</p>}
+            {events.map((event, index) => (
+              <div className={`eventRow ${index === 0 ? "latest" : ""}`} key={`${event.type}-${index}`}>
+                <span>{event.type}</span>
+                <small>{event.data.stage ?? event.data.status ?? event.data.result ?? event.data.message ?? "-"}</small>
+              </div>
+            ))}
+          </div>
+        </article>
       </section>
     </main>
   );

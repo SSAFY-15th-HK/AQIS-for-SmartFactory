@@ -1,6 +1,6 @@
 import asyncio
 import random
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -31,10 +31,12 @@ class SimDetectionRequest(BaseModel):
     color: str = "blue"
     result: str | None = None
     source: str = "robodk"
+    script_id: str | None = None
     confidence: float | None = None
 
 
 class RoboDKStatusRequest(BaseModel):
+    script_id: str | None = None
     connected: bool | None = None
     running: bool | None = None
     stage: str | None = None
@@ -44,6 +46,23 @@ class RoboDKStatusRequest(BaseModel):
 
 class TextCommandRequest(BaseModel):
     text: str
+
+
+class AgvDispatchRequest(BaseModel):
+    source: str = "ui"
+    script_id: str | None = None
+
+
+class AgvStateRequest(BaseModel):
+    status: str
+    source: str = "robodk"
+    script_id: str | None = None
+    message: str | None = None
+    waypoint_index: int | None = None
+    waypoint_total: int | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
 
 
 def system_status_event() -> dict:
@@ -90,10 +109,23 @@ async def run_agv_mission_background() -> None:
     await manager.broadcast(sim_status_event())
 
 
-def schedule_agv_if_needed(before_status: str) -> None:
+def schedule_agv_if_needed(before_status: str, *, source: str = "mock") -> None:
+    if source == "robodk":
+        return
     current = stats_service.current()
     if before_status == "IDLE" and current["agv_status"] == "MOVING_TO_DEFECT_BIN":
         asyncio.create_task(run_agv_mission_background())
+
+
+def should_wait_for_robodk_agv(source: str) -> bool:
+    return source != "mock" and bool(robodk.status().get("connected"))
+
+
+def is_active_robodk_event(source: str, script_id: str | None) -> bool:
+    if source != "robodk":
+        return True
+    active_script_id = robodk.status().get("active_script_id")
+    return not active_script_id or script_id == active_script_id
 
 
 def detection_event_from_current(color: str, is_defect: bool, confidence: float | None = None) -> dict:
@@ -130,13 +162,17 @@ def health() -> dict:
 
 
 @app.get("/api/robodk/command")
-def robodk_command() -> dict:
+def robodk_command(script_id: str | None = None) -> dict:
     """Polled by the RoboDK Python script. Reading consumes the pending command."""
-    return {"command": robodk.consume_command()}
+    return {"command": robodk.consume_command(script_id)}
 
 
 @app.post("/api/robodk/status")
 async def update_robodk_status(payload: RoboDKStatusRequest) -> dict:
+    active_script_id = robodk.status().get("active_script_id")
+    if active_script_id and not payload.script_id:
+        return {"status": "ignored", "reason": "stale_robodk_script", "data": robodk.status()}
+
     status = robodk.update_status(**payload.model_dump())
     apply_robodk_status_to_stats(status)
     event = robodk_status_event()
@@ -207,10 +243,18 @@ async def reset_simulation() -> dict:
 
 @app.post("/api/sim/detection")
 async def create_sim_detection(payload: SimDetectionRequest) -> dict:
+    if not is_active_robodk_event(payload.source, payload.script_id):
+        return {"status": "ignored", "reason": "stale_robodk_script", "sim": stats_service.current()}
+
     color = payload.color if payload.color in COLORS else random.choice(COLORS)
     is_defect = payload.result == "defect" if payload.result else color == "red"
     before_status = stats_service.current()["agv_status"]
-    stats_service.add_detection(is_defect=is_defect, color=color, part_id=payload.part_id)
+    stats_service.add_detection(
+        is_defect=is_defect,
+        color=color,
+        part_id=payload.part_id,
+        allow_auto_dispatch=payload.source != "robodk",
+    )
 
     if is_defect:
         conveyor.sort_defect()
@@ -221,18 +265,48 @@ async def create_sim_detection(payload: SimDetectionRequest) -> dict:
     await manager.broadcast(detection_event)
     await manager.broadcast({"type": "conveyor_status", "data": conveyor.status()})
     await manager.broadcast(sim_status_event())
-    schedule_agv_if_needed(before_status)
+    schedule_agv_if_needed(before_status, source=payload.source)
     return {"status": "ok", "event": detection_event, "sim": stats_service.current()}
 
 
 @app.post("/api/sim/agv/dispatch")
-async def dispatch_agv() -> dict:
+async def dispatch_agv(payload: AgvDispatchRequest | None = Body(default=None)) -> dict:
+    payload = payload or AgvDispatchRequest()
+    if not is_active_robodk_event(payload.source, payload.script_id):
+        return {"status": "ignored", "reason": "stale_robodk_script", "event": stats_service.agv_event(), "sim": stats_service.current()}
+
     before_status = stats_service.current()["agv_status"]
-    apply_robodk_status_to_stats(robodk.dispatch_agv())
-    stats_service.dispatch_agv(manual=True)
+    if payload.source == "robodk":
+        stats_service.dispatch_agv(manual=True)
+    elif should_wait_for_robodk_agv(payload.source):
+        apply_robodk_status_to_stats(robodk.dispatch_agv())
+    else:
+        apply_robodk_status_to_stats(robodk.dispatch_agv())
+        stats_service.dispatch_agv(manual=True)
+        schedule_agv_if_needed(before_status, source=payload.source)
+
+    await manager.broadcast(stats_service.agv_event())
+    await manager.broadcast(robodk_status_event())
+    await manager.broadcast(sim_status_event())
+    return {"status": "ok", "event": stats_service.agv_event(), "sim": stats_service.current()}
+
+
+@app.post("/api/sim/agv/state")
+async def update_agv_state(payload: AgvStateRequest) -> dict:
+    if not is_active_robodk_event(payload.source, payload.script_id):
+        return {"status": "ignored", "reason": "stale_robodk_script", "event": stats_service.agv_event(), "sim": stats_service.current()}
+
+    stats_service.update_agv_state(
+        status=payload.status,
+        message=payload.message,
+        waypoint_index=payload.waypoint_index,
+        waypoint_total=payload.waypoint_total,
+        x=payload.x,
+        y=payload.y,
+        z=payload.z,
+    )
     await manager.broadcast(stats_service.agv_event())
     await manager.broadcast(sim_status_event())
-    schedule_agv_if_needed(before_status)
     return {"status": "ok", "event": stats_service.agv_event(), "sim": stats_service.current()}
 
 
@@ -263,14 +337,11 @@ async def text_command(payload: TextCommandRequest) -> dict:
         stats_service.reset_all()
         apply_robodk_status_to_stats(robodk.reset_simulation())
         conveyor.stop()
-    elif intent == "EMERGENCY_STOP":
-        apply_robodk_status_to_stats(robodk.stop_simulation())
-        conveyor.stop()
-        stats_service.emergency_stop()
     elif intent == "DISPATCH_AGV" and parsed["action_executed"]:
         apply_robodk_status_to_stats(robodk.dispatch_agv())
-        stats_service.dispatch_agv(manual=True)
-        schedule_agv_if_needed(before_status)
+        if not should_wait_for_robodk_agv("text"):
+            stats_service.dispatch_agv(manual=True)
+            schedule_agv_if_needed(before_status)
 
     event = {
         "type": "text_command",
@@ -310,19 +381,3 @@ async def stop_conveyor() -> dict:
     await manager.broadcast(event)
     await manager.broadcast(sim_status_event())
     return {"status": "ok", "event": event}
-
-
-@app.post("/api/emergency_stop")
-async def emergency_stop() -> dict:
-    apply_robodk_status_to_stats(robodk.stop_simulation())
-    conveyor.stop()
-    stats_service.emergency_stop()
-    events = [
-        {"type": "conveyor_status", "data": conveyor.status()},
-        system_status_event(),
-        sim_status_event(),
-        robodk_status_event(),
-    ]
-    for event in events:
-        await manager.broadcast(event)
-    return {"status": "stopped", "events": events}
