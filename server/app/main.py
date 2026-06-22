@@ -8,6 +8,9 @@ from app.adapters.conveyor import conveyor
 from app.adapters.robodk import robodk
 from app.config import settings
 from app.schemas.events import DetectionData
+from app.services.llm_command_service import LlmCommandService, command_message
+from app.services.process_service import AqisProcessService
+from app.services.ros_bridge import RosBridgeService
 from app.services.stats_service import stats_service
 from app.services.text_command_service import TextCommandService
 from app.ws.manager import manager
@@ -24,6 +27,14 @@ app.add_middleware(
 
 COLORS = ["red", "green", "blue", "yellow"]
 text_command_service = TextCommandService(stats_service)
+llm_command_service = LlmCommandService(
+    base_url=settings.llm_base_url,
+    api_key=settings.llm_api_key,
+    model=settings.llm_model,
+    timeout_sec=settings.llm_timeout_sec,
+)
+aqis_process = AqisProcessService(settings.aqis_start_command)
+ros_bridge = RosBridgeService(enabled=settings.ros_enabled)
 
 
 class SimDetectionRequest(BaseModel):
@@ -65,6 +76,17 @@ class AgvStateRequest(BaseModel):
     z: float | None = None
 
 
+@app.on_event("startup")
+async def on_startup() -> None:
+    ros_bridge.start(manager.broadcast, handle_ros_detection)
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    ros_bridge.stop()
+    aqis_process.stop(timeout_sec=2.0)
+
+
 def system_status_event() -> dict:
     return {
         "type": "system_status",
@@ -75,6 +97,8 @@ def system_status_event() -> dict:
             "robot_ok": True,
             "voice_ok": True,
             "mode": settings.mode,
+            "aqis_process": aqis_process.status(),
+            "ros_bridge": ros_bridge.status(),
             **stats_service.current(),
         },
     }
@@ -88,6 +112,17 @@ def robodk_status_event() -> dict:
     return {"type": "robodk_status", "data": robodk.status()}
 
 
+def runtime_config_event() -> dict:
+    return {
+        "type": "runtime_config",
+        "data": {
+            "realsense_stream_url": settings.realsense_stream_url,
+            "turtlebot_view_url": settings.turtlebot_view_url,
+            "ros_enabled": settings.ros_enabled,
+        },
+    }
+
+
 def apply_robodk_status_to_stats(status: dict) -> None:
     if status.get("running"):
         stats_service.set_robodk_status("RUNNING")
@@ -99,6 +134,7 @@ def apply_robodk_status_to_stats(status: dict) -> None:
 
 async def broadcast_current_status() -> None:
     await manager.broadcast(system_status_event())
+    await manager.broadcast({"type": "aqis_process", "data": aqis_process.status()})
     await manager.broadcast(sim_status_event())
     await manager.broadcast({"type": "conveyor_status", "data": conveyor.status()})
     await manager.broadcast(robodk_status_event())
@@ -151,6 +187,40 @@ def detection_event_from_current(color: str, is_defect: bool, confidence: float 
     return {"type": "detection", "data": data}
 
 
+def handle_ros_detection(payload: dict) -> list[dict]:
+    is_defect = bool(payload.get("is_defect", payload.get("result") == "defect"))
+    color = str(payload.get("defect_class") or payload.get("color") or ("red" if is_defect else "blue")).lower()
+    confidence = payload.get("confidence")
+    before_status = stats_service.current()["agv_status"]
+    stats_service.add_detection(
+        is_defect=is_defect,
+        color=color if color in COLORS else None,
+        part_id=payload.get("part_id"),
+        allow_auto_dispatch=True,
+    )
+    if is_defect:
+        conveyor.sort_defect()
+    else:
+        conveyor.sort_normal()
+    schedule_agv_if_needed(before_status, source="ros")
+    return [
+        detection_event_from_current(color, is_defect, confidence if isinstance(confidence, (int, float)) else None),
+        {"type": "conveyor_status", "data": conveyor.status()},
+        sim_status_event(),
+    ]
+
+
+def real_state() -> dict:
+    return {
+        "stats": stats_service.current(),
+        "process": aqis_process.status(),
+        "ros": ros_bridge.status(),
+        "dobot": ros_bridge.latest_dobot_status,
+        "turtlebot_pose": ros_bridge.latest_turtlebot_pose,
+        "conveyor": conveyor.status(),
+    }
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {
@@ -158,7 +228,56 @@ def health() -> dict:
         "mode": settings.mode,
         "stats": stats_service.current(),
         "robodk": robodk.status(),
+        "aqis_process": aqis_process.status(),
+        "ros_bridge": ros_bridge.status(),
     }
+
+
+@app.get("/api/runtime/config")
+def runtime_config() -> dict:
+    return runtime_config_event()["data"]
+
+
+@app.get("/api/aqis/status")
+def aqis_status() -> dict:
+    return {"process": aqis_process.status(), "ros_bridge": ros_bridge.status(), "state": real_state()}
+
+
+@app.post("/api/aqis/start")
+async def start_aqis() -> dict:
+    result = aqis_process.start()
+    stats_service.start_simulation()
+    await manager.broadcast({"type": "aqis_process", "data": aqis_process.status()})
+    await broadcast_current_status()
+    return result
+
+
+@app.post("/api/aqis/stop")
+async def stop_aqis() -> dict:
+    result = aqis_process.stop()
+    stats_service.stop_simulation()
+    conveyor.stop()
+    await manager.broadcast({"type": "aqis_process", "data": aqis_process.status()})
+    await broadcast_current_status()
+    return result
+
+
+@app.post("/api/emergency_stop")
+async def emergency_stop() -> dict:
+    process_result = aqis_process.stop(timeout_sec=2.0)
+    stats_service.stop_simulation()
+    conveyor.stop()
+    event = {
+        "type": "emergency_stop",
+        "data": {
+            "status": "stopped",
+            "process": process_result["process"],
+            "message": "Emergency stop executed.",
+        },
+    }
+    await manager.broadcast(event)
+    await broadcast_current_status()
+    return {"status": "stopped", "event": event}
 
 
 @app.get("/api/robodk/command")
@@ -194,10 +313,16 @@ def sim_status() -> dict:
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     await manager.connect(websocket)
+    await websocket.send_json(runtime_config_event())
     await websocket.send_json(system_status_event())
+    await websocket.send_json({"type": "aqis_process", "data": aqis_process.status()})
     await websocket.send_json(sim_status_event())
     await websocket.send_json({"type": "conveyor_status", "data": conveyor.status()})
     await websocket.send_json(robodk_status_event())
+    if ros_bridge.latest_turtlebot_pose:
+        await websocket.send_json({"type": "turtlebot_pose", "data": ros_bridge.latest_turtlebot_pose})
+    if ros_bridge.latest_dobot_status:
+        await websocket.send_json({"type": "dobot_status", "data": ros_bridge.latest_dobot_status})
     try:
         while True:
             await websocket.receive_text()
@@ -317,40 +442,44 @@ def agv_status() -> dict:
 
 @app.post("/api/text-command")
 async def text_command(payload: TextCommandRequest) -> dict:
-    parsed = text_command_service.parse(payload.text)
+    parsed = llm_command_service.classify(payload.text)
     intent = parsed["intent"]
     before_status = stats_service.current()["agv_status"]
+    action_status: str | None = None
 
-    if intent == "START_SIM":
-        apply_robodk_status_to_stats(robodk.start_simulation())
-        conveyor.start()
+    if intent == "START_AQIS":
+        result = aqis_process.start()
+        action_status = result["status"]
         stats_service.start_simulation()
-    elif intent == "PAUSE_SIM":
-        apply_robodk_status_to_stats(robodk.pause_simulation())
-        conveyor.stop()
-        stats_service.pause_simulation()
-    elif intent == "STOP_SIM":
-        apply_robodk_status_to_stats(robodk.stop_simulation())
+    elif intent == "STOP_AQIS":
+        result = aqis_process.stop()
+        action_status = result["status"]
         conveyor.stop()
         stats_service.stop_simulation()
-    elif intent == "RESET_SIM":
-        stats_service.reset_all()
-        apply_robodk_status_to_stats(robodk.reset_simulation())
+    elif intent == "EMERGENCY_STOP":
+        result = aqis_process.stop(timeout_sec=2.0)
+        action_status = result["status"]
         conveyor.stop()
-    elif intent == "DISPATCH_AGV" and parsed["action_executed"]:
-        apply_robodk_status_to_stats(robodk.dispatch_agv())
-        if not should_wait_for_robodk_agv("text"):
+        stats_service.stop_simulation()
+    elif intent == "DISPATCH_AGV":
+        if stats_service.current()["defect_bin_load"] <= 0:
+            action_status = "blocked"
+        else:
             stats_service.dispatch_agv(manual=True)
             schedule_agv_if_needed(before_status)
+
+    message = command_message(intent, real_state(), action_status=action_status)
 
     event = {
         "type": "text_command",
         "data": {
             "user_text": payload.text,
-            "intent": parsed["intent"],
-            "message": parsed["message"],
-            "assistant_message": parsed["message"],
-            "action_executed": parsed["action_executed"],
+            "intent": intent,
+            "message": message,
+            "assistant_message": message,
+            "action_executed": intent not in {"UNKNOWN", "QUERY_STATUS", "QUERY_DEFECT_RATE", "QUERY_TOTAL_COUNT", "QUERY_DOBOT", "QUERY_TURTLEBOT_POSE"},
+            "source": parsed.get("source", "unknown"),
+            "llm_error": parsed.get("llm_error"),
         },
     }
     await manager.broadcast(event)

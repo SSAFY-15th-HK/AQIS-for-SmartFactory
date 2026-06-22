@@ -1,42 +1,61 @@
-from fastapi.testclient import TestClient
+import asyncio
 
-from app.main import app
+from app.main import (
+    RoboDKStatusRequest,
+    SimDetectionRequest,
+    TextCommandRequest,
+    create_sim_detection,
+    robodk_command,
+    start_simulation,
+    pause_simulation,
+    reset_simulation,
+    sim_status,
+    text_command,
+    update_robodk_status,
+)
 from app.services.stats_service import stats_service
+
+
+def drain_robodk_commands():
+    while robodk_command()["command"] is not None:
+        pass
 
 
 def test_sim_detection_triggers_agv_and_text_command_status():
     stats_service.reset_all()
-    client = TestClient(app)
+    drain_robodk_commands()
 
-    assert client.post("/api/sim/start").json()["data"]["system_status"] == "RUNNING"
+    assert asyncio.run(start_simulation())["data"]["system_status"] == "RUNNING"
 
     for index in range(3):
-        response = client.post(
-            "/api/sim/detection",
-            json={"part_id": f"part_{index}", "color": "red", "result": "defect", "source": "test"},
+        response = asyncio.run(
+            create_sim_detection(
+                SimDetectionRequest(part_id=f"part_{index}", color="red", result="defect", source="test")
+            )
         )
-        assert response.status_code == 200
+        assert response["status"] == "ok"
 
-    current = client.get("/api/sim/status").json()
+    current = sim_status()
     assert current["defect_bin_load"] == 3
     assert current["agv_status"] in {"MOVING_TO_DEFECT_BIN", "IDLE"}
 
-    command = client.post("/api/text-command", json={"text": "defect rate"}).json()
+    command = asyncio.run(text_command(TextCommandRequest(text="defect rate")))
     assert command["intent"] == "QUERY_DEFECT_RATE"
     assert "100.0%" in command["message"]
 
 
 def test_normal_detection_is_processed_without_defect_dispatch():
     stats_service.reset_all()
-    client = TestClient(app)
+    drain_robodk_commands()
 
-    response = client.post(
-        "/api/sim/detection",
-        json={"part_id": "normal_001", "color": "blue", "result": "normal", "source": "robodk"},
+    response = asyncio.run(
+        create_sim_detection(
+            SimDetectionRequest(part_id="normal_001", color="blue", result="normal", source="robodk")
+        )
     )
 
-    assert response.status_code == 200
-    sim = response.json()["sim"]
+    assert response["status"] == "ok"
+    sim = response["sim"]
     assert sim["session_total"] == 1
     assert sim["normal_count"] == 1
     assert sim["session_defects"] == 0
@@ -46,36 +65,36 @@ def test_normal_detection_is_processed_without_defect_dispatch():
 
 def test_web_control_enqueues_commands_for_robodk_script():
     stats_service.reset_all()
-    client = TestClient(app)
+    drain_robodk_commands()
 
-    client.post("/api/sim/start")
-    first = client.get("/api/robodk/command").json()
-    second = client.get("/api/robodk/command").json()
+    asyncio.run(start_simulation())
+    first = robodk_command()
+    second = robodk_command()
 
     assert first == {"command": "START"}
     assert second == {"command": None}
 
-    client.post("/api/sim/pause")
-    assert client.get("/api/robodk/command").json() == {"command": "PAUSE"}
+    asyncio.run(pause_simulation())
+    assert robodk_command() == {"command": "PAUSE"}
 
-    client.post("/api/sim/reset")
-    assert client.get("/api/robodk/command").json() == {"command": "RESET"}
+    asyncio.run(reset_simulation())
+    assert robodk_command() == {"command": "RESET"}
 
 
 def test_robodk_status_and_detection_updates_are_accepted_from_script():
     stats_service.reset_all()
-    client = TestClient(app)
+    drain_robodk_commands()
 
-    status_response = client.post(
-        "/api/robodk/status",
-        json={"running": True, "stage": "CONVEYOR", "message": "moving", "red_x": 123.4},
+    status_response = asyncio.run(
+        update_robodk_status(
+            RoboDKStatusRequest(running=True, stage="CONVEYOR", message="moving", red_x=123.4)
+        )
     )
-    assert status_response.status_code == 200
-    assert status_response.json()["data"]["robodk_status"] == "RUNNING"
+    assert status_response["data"]["robodk_status"] == "RUNNING"
 
-    normal_response = client.post(
-        "/api/sim/detection",
-        json={"part_id": "robodk_blue_001", "color": "blue", "result": "normal", "source": "robodk"},
+    normal_response = asyncio.run(
+        create_sim_detection(
+            SimDetectionRequest(part_id="robodk_blue_001", color="blue", result="normal", source="robodk")
+        )
     )
-    assert normal_response.status_code == 200
-    assert normal_response.json()["event"]["data"]["normal_count"] == 1
+    assert normal_response["event"]["data"]["normal_count"] == 1
