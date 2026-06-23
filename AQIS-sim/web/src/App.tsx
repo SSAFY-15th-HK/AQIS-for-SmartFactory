@@ -39,10 +39,10 @@ const WS_URL = "ws://localhost:8000/ws";
 const CONVEYOR_VIEW = {
   flowDuration: 16,
   parts: [
-    { name: "yellow", startLeft: "10%" },
-    { name: "red", startLeft: "24%" },
-    { name: "green", startLeft: "38%" },
-    { name: "blue", startLeft: "52%" },
+    { id: "canlid-normal-1", variant: "normal", sourceColor: "yellow", startLeft: "10%" },
+    { id: "canlid-abnormal", variant: "abnormal", sourceColor: "red", startLeft: "24%" },
+    { id: "canlid-normal-2", variant: "normal", sourceColor: "green", startLeft: "38%" },
+    { id: "canlid-normal-3", variant: "normal", sourceColor: "blue", startLeft: "52%" },
   ],
 };
 
@@ -77,9 +77,14 @@ function statusTone(status: string): string {
   return "muted";
 }
 
-function colorName(color?: string): string {
+function legacyColorName(color?: string): string {
   if (!color) return "unknown";
   return color.charAt(0).toUpperCase() + color.slice(1);
+}
+
+function canLidLabel(color?: string): string {
+  if (["red", "yellow", "green", "blue"].includes(color ?? "")) return "Can Lid";
+  return "Can Lid";
 }
 
 function partStyle(startLeft: string): CSSProperties & Record<string, string> {
@@ -214,7 +219,7 @@ export default function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">AQIS Monitoring</p>
-          <h1>RoboDK 공정 모니터링</h1>
+          <h1>RoboDK 캔 리드 검사 모니터링</h1>
         </div>
         <div className={`connection ${connected ? "ok" : "danger"}`}>
           <span />
@@ -268,10 +273,10 @@ export default function App() {
             >
               {conveyorParts.map((part) => (
                 <span
-                  className={`part ${part.name}`}
-                  key={part.name}
+                  className="part canLid"
+                  key={part.id}
                   style={partStyle(part.startLeft)}
-                  title={colorName(part.name)}
+                  title={`Can lid (${legacyColorName(part.sourceColor)})`}
                 />
               ))}
             </div>
@@ -295,12 +300,12 @@ export default function App() {
 
         <article className="panel">
           <div className="panelHeader">
-            <h2>검사 집계</h2>
-            <span className="stage muted">Total {stats.session_total}</span>
+            <h2>캔 리드 검사 집계</h2>
+            <span className="stage muted">Can Lids {stats.session_total}</span>
           </div>
           <div className="metricGrid">
             <div>
-              <span>전체</span>
+              <span>검사 수</span>
               <strong>{stats.session_total}</strong>
             </div>
             <div>
@@ -317,15 +322,15 @@ export default function App() {
             </div>
           </div>
 
-          <h3>최근 검사</h3>
+          <h3>최근 캔 리드 검사</h3>
           <div className="detectionList">
             {stats.recent_detections.length === 0 && <p className="empty">검사 이벤트 없음</p>}
             {stats.recent_detections.slice(0, 5).map((item, index) => (
               <div className="detectionRow" key={`${item.part_id ?? index}-${index}`}>
-                <span className={`colorDot ${item.color ?? "unknown"}`} />
+                <span className="colorDot can" />
                 <div>
-                  <strong>{item.part_id ?? `part_${item.session_total ?? index + 1}`}</strong>
-                  <small>{colorName(item.color)}</small>
+                  <strong>{item.part_id ?? `canlid_${item.session_total ?? index + 1}`}</strong>
+                  <small>{canLidLabel(item.color)} · source {legacyColorName(item.color)}</small>
                 </div>
                 <b className={item.is_defect || item.result === "defect" ? "danger" : "ok"}>
                   {item.is_defect || item.result === "defect" ? "DEFECT" : "NORMAL"}
@@ -351,7 +356,7 @@ export default function App() {
           </div>
           <div className="progressBlock">
             <div className="progressLabel">
-              <span>Defect Bin</span>
+              <span>Abnormal Lid Bin</span>
               <b>{stats.defect_bin_load} / {stats.defect_threshold}</b>
             </div>
             <div className="progressTrack bin"><div style={{ width: `${binProgress}%` }} /></div>

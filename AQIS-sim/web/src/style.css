@@ -354,14 +354,23 @@ dt,
   position: absolute;
   top: 50%;
   left: var(--start-left);
-  width: 34px;
-  height: 34px;
+  width: 46px;
+  height: 49px;
   transform: translate(-50%, -50%);
-  border: 2px solid rgba(15, 23, 42, 0.28);
-  border-radius: 4px;
-  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.22);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  background-image: url("/assets/canlid-reference.webp");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  filter: drop-shadow(0 4px 7px rgba(15, 23, 42, 0.28));
   animation: partMove var(--flow-duration) linear infinite;
   animation-play-state: paused;
+}
+
+.part.canLid {
+  background-image: url("/assets/canlid-reference.webp");
 }
 
 .conveyor.running .part {
@@ -499,6 +508,14 @@ dt,
 .colorDot.red { background: #ef4444; }
 .colorDot.green { background: #22c55e; }
 .colorDot.blue { background: #3b82f6; }
+.colorDot.can {
+  border-radius: 50%;
+  background-image: url("/assets/canlid-reference.webp");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 150%;
+  background-color: #4b4d86;
+}
 
 .progressBlock + .progressBlock {
   margin-top: 14px;
