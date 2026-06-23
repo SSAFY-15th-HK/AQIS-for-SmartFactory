@@ -22,15 +22,15 @@ class Settings:
     turtlebot_namespace: str = os.getenv("TURTLEBOT_NAMESPACE", "")
     aqis_start_command: str = os.getenv(
         "AQIS_START_COMMAND",
-        "source /opt/ros/humble/setup.bash && "
-        "source /home/ssafy/magician_ros2_control_system_ws/install/setup.bash && "
-        "source /home/ssafy/ssafy_ws/install/setup.bash && "
-        "ros2 launch integrate_prac integrate.launch.py",
+        "bash ../AQIS-real/scripts/monitoring_session.sh",
     )
     llm_base_url: str = os.getenv("LLM_BASE_URL", "")
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_model: str = os.getenv("LLM_MODEL", "Qwen3.6-35B-A3B-UD-IQ2_M")
     llm_timeout_sec: float = float(os.getenv("LLM_TIMEOUT_SEC", "8"))
+    detection_dedupe_window_sec: float = float(os.getenv("DETECTION_DEDUPE_WINDOW_SEC", "8.0"))
+    detection_dedupe_iou_threshold: float = float(os.getenv("DETECTION_DEDUPE_IOU_THRESHOLD", "0.5"))
+    detection_dedupe_center_distance_px: float = float(os.getenv("DETECTION_DEDUPE_CENTER_DISTANCE_PX", "70"))
 
     @property
     def mode(self) -> dict[str, str]:

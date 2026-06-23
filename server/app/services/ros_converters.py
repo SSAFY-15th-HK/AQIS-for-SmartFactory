@@ -95,6 +95,23 @@ def pose_to_turtlebot_event(msg: Any, source: str) -> dict:
     }
 
 
+def transform_to_turtlebot_event(msg: Any, source: str) -> dict:
+    transform = msg.transform
+    translation = transform.translation
+    rotation = transform.rotation
+    return {
+        "type": "turtlebot_pose",
+        "data": {
+            "source": source,
+            "x": float(translation.x),
+            "y": float(translation.y),
+            "z": float(getattr(translation, "z", 0.0)),
+            "yaw": quaternion_to_yaw(rotation),
+            "stamp": time.time(),
+        },
+    }
+
+
 def joint_state_to_dobot_partial(msg: Any) -> dict:
     names = list(getattr(msg, "name", []))
     positions = list(getattr(msg, "position", []))

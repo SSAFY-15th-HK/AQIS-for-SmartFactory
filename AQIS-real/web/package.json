@@ -10,11 +10,13 @@
   },
   "dependencies": {
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "three": "^0.184.0"
   },
   "devDependencies": {
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@types/three": "^0.184.1",
     "@vitejs/plugin-react": "latest",
     "typescript": "latest",
     "vite": "latest"

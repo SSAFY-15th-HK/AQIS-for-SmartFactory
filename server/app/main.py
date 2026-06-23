@@ -1,18 +1,39 @@
-import asyncio
-import random
-from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.adapters.conveyor import conveyor
 from app.adapters.robodk import robodk
 from app.config import settings
-from app.schemas.events import DetectionData
+from app.routers.simulation import (
+    AgvDispatchRequest,
+    AgvStateRequest,
+    COLORS,
+    SimDetectionRequest,
+    apply_robodk_status_to_stats,
+    agv_status,
+    create_mock_detection,
+    create_sim_detection,
+    detection_event_from_current,
+    dispatch_agv,
+    mock_router,
+    pause_simulation,
+    reset_simulation,
+    robodk_status_event,
+    router as sim_router,
+    schedule_agv_if_needed,
+    set_status_broadcaster,
+    sim_status,
+    sim_status_event,
+    start_simulation,
+    stop_simulation,
+    update_agv_state,
+)
+from app.services.detection_deduper import DetectionDeduper
 from app.services.llm_command_service import LlmCommandService, command_message
 from app.services.process_service import AqisProcessService
 from app.services.ros_bridge import RosBridgeService
 from app.services.stats_service import stats_service
-from app.services.text_command_service import TextCommandService
 from app.ws.manager import manager
 
 app = FastAPI(title="AQIS Smart Factory API", version="0.2.0")
@@ -25,8 +46,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-COLORS = ["red", "green", "blue", "yellow"]
-text_command_service = TextCommandService(stats_service)
 llm_command_service = LlmCommandService(
     base_url=settings.llm_base_url,
     api_key=settings.llm_api_key,
@@ -35,15 +54,11 @@ llm_command_service = LlmCommandService(
 )
 aqis_process = AqisProcessService(settings.aqis_start_command)
 ros_bridge = RosBridgeService(enabled=settings.ros_enabled)
-
-
-class SimDetectionRequest(BaseModel):
-    part_id: str | None = None
-    color: str = "blue"
-    result: str | None = None
-    source: str = "robodk"
-    script_id: str | None = None
-    confidence: float | None = None
+detection_deduper = DetectionDeduper(
+    window_sec=settings.detection_dedupe_window_sec,
+    iou_threshold=settings.detection_dedupe_iou_threshold,
+    center_distance_px=settings.detection_dedupe_center_distance_px,
+)
 
 
 class RoboDKStatusRequest(BaseModel):
@@ -57,23 +72,6 @@ class RoboDKStatusRequest(BaseModel):
 
 class TextCommandRequest(BaseModel):
     text: str
-
-
-class AgvDispatchRequest(BaseModel):
-    source: str = "ui"
-    script_id: str | None = None
-
-
-class AgvStateRequest(BaseModel):
-    status: str
-    source: str = "robodk"
-    script_id: str | None = None
-    message: str | None = None
-    waypoint_index: int | None = None
-    waypoint_total: int | None = None
-    x: float | None = None
-    y: float | None = None
-    z: float | None = None
 
 
 @app.on_event("startup")
@@ -104,14 +102,6 @@ def system_status_event() -> dict:
     }
 
 
-def sim_status_event() -> dict:
-    return stats_service.status_event()
-
-
-def robodk_status_event() -> dict:
-    return {"type": "robodk_status", "data": robodk.status()}
-
-
 def runtime_config_event() -> dict:
     return {
         "type": "runtime_config",
@@ -123,15 +113,6 @@ def runtime_config_event() -> dict:
     }
 
 
-def apply_robodk_status_to_stats(status: dict) -> None:
-    if status.get("running"):
-        stats_service.set_robodk_status("RUNNING")
-    elif status.get("connected"):
-        stats_service.set_robodk_status("CONNECTED")
-    else:
-        stats_service.set_robodk_status("DISCONNECTED")
-
-
 async def broadcast_current_status() -> None:
     await manager.broadcast(system_status_event())
     await manager.broadcast({"type": "aqis_process", "data": aqis_process.status()})
@@ -140,74 +121,83 @@ async def broadcast_current_status() -> None:
     await manager.broadcast(robodk_status_event())
 
 
-async def run_agv_mission_background() -> None:
-    await stats_service.run_agv_mission(manager.broadcast)
-    await manager.broadcast(sim_status_event())
+def normalize_detection_payload(payload: dict) -> dict | None:
+    if payload.get("detected") is False or payload.get("has_detection") is False:
+        return None
+
+    detections = payload.get("detections")
+    if isinstance(detections, list) and not detections:
+        return None
+
+    result = str(payload.get("result", "")).strip().lower()
+    if result in {"none", "no_detection", "no detection", "empty"}:
+        return None
+
+    if isinstance(payload.get("is_defect"), bool):
+        is_defect = bool(payload["is_defect"])
+    elif result in {"defect", "defective", "ng", "bad"}:
+        is_defect = True
+    elif result in {"normal", "ok", "good", "pass"}:
+        is_defect = False
+    elif isinstance(detections, list) and detections:
+        is_defect = True
+    else:
+        return None
+
+    color = str(payload.get("defect_class") or payload.get("color") or payload.get("label") or ("red" if is_defect else "blue")).lower()
+    return {**payload, "is_defect": is_defect, "color": color, "result": "defect" if is_defect else "normal"}
 
 
-def schedule_agv_if_needed(before_status: str, *, source: str = "mock") -> None:
-    if source == "robodk":
-        return
-    current = stats_service.current()
-    if before_status == "IDLE" and current["agv_status"] == "MOVING_TO_DEFECT_BIN":
-        asyncio.create_task(run_agv_mission_background())
+def expanded_detection_payloads(payload: dict) -> list[dict]:
+    detections = payload.get("detections")
+    if not isinstance(detections, list):
+        return [payload]
 
-
-def should_wait_for_robodk_agv(source: str) -> bool:
-    return source != "mock" and bool(robodk.status().get("connected"))
-
-
-def is_active_robodk_event(source: str, script_id: str | None) -> bool:
-    if source != "robodk":
-        return True
-    active_script_id = robodk.status().get("active_script_id")
-    return not active_script_id or script_id == active_script_id
-
-
-def detection_event_from_current(color: str, is_defect: bool, confidence: float | None = None) -> dict:
-    current = stats_service.current()
-    data = DetectionData(
-        id=current["session_total"],
-        color=color if color in COLORS else "blue",  # type: ignore[arg-type]
-        is_defect=is_defect,
-        confidence=confidence if confidence is not None else round(random.uniform(0.86, 0.98), 2),
-        bbox=[random.randint(250, 360), random.randint(180, 260), 80, 60],
-        session_total=current["session_total"],
-        session_defects=current["session_defects"],
-        defect_rate=current["defect_rate"],
-    ).model_dump()
-    data.update(
-        {
-            "normal_count": current["normal_count"],
-            "defect_bin_load": current["defect_bin_load"],
-            "defect_threshold": current["defect_threshold"],
-            "agv_status": current["agv_status"],
-        }
-    )
-    return {"type": "detection", "data": data}
+    shared = {
+        key: payload[key]
+        for key in ("source", "frame_id", "timestamp", "image_size")
+        if key in payload
+    }
+    return [{**shared, **item} for item in detections if isinstance(item, dict)]
 
 
 def handle_ros_detection(payload: dict) -> list[dict]:
-    is_defect = bool(payload.get("is_defect", payload.get("result") == "defect"))
-    color = str(payload.get("defect_class") or payload.get("color") or ("red" if is_defect else "blue")).lower()
-    confidence = payload.get("confidence")
     before_status = stats_service.current()["agv_status"]
-    stats_service.add_detection(
-        is_defect=is_defect,
-        color=color if color in COLORS else None,
-        part_id=payload.get("part_id"),
-        allow_auto_dispatch=True,
-    )
-    if is_defect:
+    detection_events = []
+    accepted = []
+
+    for item in expanded_detection_payloads(payload):
+        normalized = normalize_detection_payload(item)
+        if not normalized or not detection_deduper.should_accept(normalized):
+            continue
+
+        is_defect = bool(normalized["is_defect"])
+        color = str(normalized["color"]).lower()
+        stats_service.add_detection(
+            is_defect=is_defect,
+            color=color if color in COLORS else None,
+            part_id=normalized.get("part_id"),
+            allow_auto_dispatch=True,
+            metadata={
+                key: normalized[key]
+                for key in ("confidence", "bbox", "center", "image_size", "source", "label", "result")
+                if key in normalized
+            },
+        )
+        accepted.append(normalized)
+        detection_events.append(detection_event_from_current(color, is_defect, payload=normalized, random_fallback=False))
+
+    if not accepted:
+        return []
+
+    if any(item["is_defect"] for item in accepted):
         conveyor.sort_defect()
+        conveyor.stop()
     else:
         conveyor.sort_normal()
+
     schedule_agv_if_needed(before_status, source="ros")
-    return [
-        detection_event_from_current(color, is_defect, confidence if isinstance(confidence, (int, float)) else None),
-        {"type": "conveyor_status", "data": conveyor.status()},
-        sim_status_event(),
-    ]
+    return detection_events + [{"type": "conveyor_status", "data": conveyor.status()}, sim_status_event()]
 
 
 def real_state() -> dict:
@@ -219,6 +209,17 @@ def real_state() -> dict:
         "turtlebot_pose": ros_bridge.latest_turtlebot_pose,
         "conveyor": conveyor.status(),
     }
+
+
+def conveyor_api_response(event: dict, *, success_status: str = "ok") -> dict:
+    data = event.get("data", {})
+    if data.get("command_ok") is False or data.get("last_error"):
+        return {
+            "status": "error",
+            "message": data.get("last_error") or "Conveyor command failed.",
+            "event": event,
+        }
+    return {"status": success_status, "event": event}
 
 
 @app.get("/api/health")
@@ -256,8 +257,9 @@ async def start_aqis() -> dict:
 async def stop_aqis() -> dict:
     result = aqis_process.stop()
     stats_service.stop_simulation()
-    conveyor.stop()
+    conveyor_result = conveyor.stop()
     await manager.broadcast({"type": "aqis_process", "data": aqis_process.status()})
+    await manager.broadcast({"type": "conveyor_status", "data": conveyor_result})
     await broadcast_current_status()
     return result
 
@@ -266,18 +268,22 @@ async def stop_aqis() -> dict:
 async def emergency_stop() -> dict:
     process_result = aqis_process.stop(timeout_sec=2.0)
     stats_service.stop_simulation()
-    conveyor.stop()
+    conveyor_result = conveyor.emergency_stop()
     event = {
         "type": "emergency_stop",
         "data": {
-            "status": "stopped",
+            "status": "stopped" if conveyor_result.get("command_ok", True) else "error",
             "process": process_result["process"],
+            "conveyor": conveyor_result,
             "message": "Emergency stop executed.",
         },
     }
     await manager.broadcast(event)
     await broadcast_current_status()
-    return {"status": "stopped", "event": event}
+    response = {"status": event["data"]["status"], "event": event}
+    if response["status"] == "error":
+        response["message"] = conveyor_result.get("last_error") or "Conveyor emergency stop failed."
+    return response
 
 
 @app.get("/api/robodk/command")
@@ -305,9 +311,14 @@ def current_stats() -> dict:
     return stats_service.current()
 
 
-@app.get("/api/sim/status")
-def sim_status() -> dict:
-    return stats_service.current()
+@app.post("/api/stats/reset")
+async def reset_stats() -> dict:
+    detection_deduper.reset()
+    data = stats_service.reset_all()
+    event = {"type": "sim_status", "data": data}
+    await manager.broadcast(event)
+    await manager.broadcast(system_status_event())
+    return {"status": "ok", "event": event}
 
 
 @app.websocket("/ws")
@@ -319,6 +330,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.send_json(sim_status_event())
     await websocket.send_json({"type": "conveyor_status", "data": conveyor.status()})
     await websocket.send_json(robodk_status_event())
+    if ros_bridge.latest_map_event:
+        await websocket.send_json(ros_bridge.latest_map_event)
     if ros_bridge.latest_turtlebot_pose:
         await websocket.send_json({"type": "turtlebot_pose", "data": ros_bridge.latest_turtlebot_pose})
     if ros_bridge.latest_dobot_status:
@@ -330,114 +343,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         manager.disconnect(websocket)
 
 
-@app.post("/api/sim/start")
-async def start_simulation() -> dict:
-    apply_robodk_status_to_stats(robodk.start_simulation())
-    conveyor.start()
-    event = {"type": "sim_status", "data": stats_service.start_simulation()}
-    await broadcast_current_status()
-    return event
-
-
-@app.post("/api/sim/pause")
-async def pause_simulation() -> dict:
-    apply_robodk_status_to_stats(robodk.pause_simulation())
-    conveyor.stop()
-    event = {"type": "sim_status", "data": stats_service.pause_simulation()}
-    await broadcast_current_status()
-    return event
-
-
-@app.post("/api/sim/stop")
-async def stop_simulation() -> dict:
-    apply_robodk_status_to_stats(robodk.stop_simulation())
-    conveyor.stop()
-    event = {"type": "sim_status", "data": stats_service.stop_simulation()}
-    await broadcast_current_status()
-    return event
-
-
-@app.post("/api/sim/reset")
-async def reset_simulation() -> dict:
-    conveyor.stop()
-    event = {"type": "sim_status", "data": stats_service.reset_all()}
-    apply_robodk_status_to_stats(robodk.reset_simulation())
-    await broadcast_current_status()
-    return event
-
-
-@app.post("/api/sim/detection")
-async def create_sim_detection(payload: SimDetectionRequest) -> dict:
-    if not is_active_robodk_event(payload.source, payload.script_id):
-        return {"status": "ignored", "reason": "stale_robodk_script", "sim": stats_service.current()}
-
-    color = payload.color if payload.color in COLORS else random.choice(COLORS)
-    is_defect = payload.result == "defect" if payload.result else color == "red"
-    before_status = stats_service.current()["agv_status"]
-    stats_service.add_detection(
-        is_defect=is_defect,
-        color=color,
-        part_id=payload.part_id,
-        allow_auto_dispatch=payload.source != "robodk",
-    )
-
-    if is_defect:
-        conveyor.sort_defect()
-    else:
-        conveyor.sort_normal()
-
-    detection_event = detection_event_from_current(color, is_defect, payload.confidence)
-    await manager.broadcast(detection_event)
-    await manager.broadcast({"type": "conveyor_status", "data": conveyor.status()})
-    await manager.broadcast(sim_status_event())
-    schedule_agv_if_needed(before_status, source=payload.source)
-    return {"status": "ok", "event": detection_event, "sim": stats_service.current()}
-
-
-@app.post("/api/sim/agv/dispatch")
-async def dispatch_agv(payload: AgvDispatchRequest | None = Body(default=None)) -> dict:
-    payload = payload or AgvDispatchRequest()
-    if not is_active_robodk_event(payload.source, payload.script_id):
-        return {"status": "ignored", "reason": "stale_robodk_script", "event": stats_service.agv_event(), "sim": stats_service.current()}
-
-    before_status = stats_service.current()["agv_status"]
-    if payload.source == "robodk":
-        stats_service.dispatch_agv(manual=True)
-    elif should_wait_for_robodk_agv(payload.source):
-        apply_robodk_status_to_stats(robodk.dispatch_agv())
-    else:
-        apply_robodk_status_to_stats(robodk.dispatch_agv())
-        stats_service.dispatch_agv(manual=True)
-        schedule_agv_if_needed(before_status, source=payload.source)
-
-    await manager.broadcast(stats_service.agv_event())
-    await manager.broadcast(robodk_status_event())
-    await manager.broadcast(sim_status_event())
-    return {"status": "ok", "event": stats_service.agv_event(), "sim": stats_service.current()}
-
-
-@app.post("/api/sim/agv/state")
-async def update_agv_state(payload: AgvStateRequest) -> dict:
-    if not is_active_robodk_event(payload.source, payload.script_id):
-        return {"status": "ignored", "reason": "stale_robodk_script", "event": stats_service.agv_event(), "sim": stats_service.current()}
-
-    stats_service.update_agv_state(
-        status=payload.status,
-        message=payload.message,
-        waypoint_index=payload.waypoint_index,
-        waypoint_total=payload.waypoint_total,
-        x=payload.x,
-        y=payload.y,
-        z=payload.z,
-    )
-    await manager.broadcast(stats_service.agv_event())
-    await manager.broadcast(sim_status_event())
-    return {"status": "ok", "event": stats_service.agv_event(), "sim": stats_service.current()}
-
-
-@app.get("/api/sim/agv/status")
-def agv_status() -> dict:
-    return stats_service.agv_event()["data"]
+set_status_broadcaster(broadcast_current_status)
+app.include_router(sim_router)
+app.include_router(mock_router)
 
 
 @app.post("/api/text-command")
@@ -454,12 +362,16 @@ async def text_command(payload: TextCommandRequest) -> dict:
     elif intent == "STOP_AQIS":
         result = aqis_process.stop()
         action_status = result["status"]
-        conveyor.stop()
+        conveyor_result = conveyor.stop()
+        if conveyor_result.get("command_ok") is False:
+            action_status = "error"
         stats_service.stop_simulation()
     elif intent == "EMERGENCY_STOP":
         result = aqis_process.stop(timeout_sec=2.0)
         action_status = result["status"]
-        conveyor.stop()
+        conveyor_result = conveyor.emergency_stop()
+        if conveyor_result.get("command_ok") is False:
+            action_status = "error"
         stats_service.stop_simulation()
     elif intent == "DISPATCH_AGV":
         if stats_service.current()["defect_bin_load"] <= 0:
@@ -487,20 +399,13 @@ async def text_command(payload: TextCommandRequest) -> dict:
     return event["data"]
 
 
-@app.post("/api/mock/detection")
-async def create_mock_detection(color: str | None = None) -> dict:
-    selected_color = color if color in COLORS else random.choice(COLORS)
-    payload = SimDetectionRequest(color=selected_color, result="defect" if selected_color == "red" else "normal", source="mock")
-    return await create_sim_detection(payload)
-
-
 @app.post("/api/conveyor/start")
 async def start_conveyor() -> dict:
     stats_service.start_simulation()
     event = {"type": "conveyor_status", "data": conveyor.start()}
     await manager.broadcast(event)
     await manager.broadcast(sim_status_event())
-    return {"status": "ok", "event": event}
+    return conveyor_api_response(event)
 
 
 @app.post("/api/conveyor/stop")
@@ -509,4 +414,4 @@ async def stop_conveyor() -> dict:
     event = {"type": "conveyor_status", "data": conveyor.stop()}
     await manager.broadcast(event)
     await manager.broadcast(sim_status_event())
-    return {"status": "ok", "event": event}
+    return conveyor_api_response(event)

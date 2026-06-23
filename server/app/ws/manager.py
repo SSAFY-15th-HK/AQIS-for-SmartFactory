@@ -29,7 +29,7 @@ class ConnectionManager:
             disconnected: list[WebSocket] = []
             for connection in list(self.active_connections):
                 try:
-                    await asyncio.wait_for(connection.send_json(message), timeout=0.5)
+                    await asyncio.wait_for(connection.send_json(message), timeout=5.0)
                 except Exception:
                     disconnected.append(connection)
 
