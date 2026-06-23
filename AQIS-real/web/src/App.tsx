@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { DobotUrdfView } from "./DobotUrdfView";
 
 type AqisEvent = {
   type: string;
@@ -118,21 +119,51 @@ export default function App() {
     turtlebot_view_url: "http://localhost:8081/stream",
     ros_enabled: false,
   });
+  const [realsenseSignal, setRealsenseSignal] = useState<"waiting" | "online" | "offline">("waiting");
   const [pending, setPending] = useState(false);
   const [text, setText] = useState("");
   const [responses, setResponses] = useState<AqisEvent[]>([]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    fetch(`${API_BASE}/api/runtime/config`)
+      .then((response) => response.json())
+      .then((runtimeConfig: RuntimeConfig) => {
+        if (!cancelled) {
+          setConfig((prev) => ({ ...prev, ...runtimeConfig }));
+        }
+      })
+      .catch(() => {
+        // The WebSocket will still provide runtime config after reconnect.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     let closed = false;
     let reconnectTimer = 0;
+    let heartbeatTimer = 0;
     let ws: WebSocket | null = null;
 
     function connect() {
       ws = new WebSocket(WS_URL);
-      ws.onopen = () => setConnected(true);
+      ws.onopen = () => {
+        setConnected(true);
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = window.setInterval(() => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send("ping");
+          }
+        }, 5000);
+      };
       ws.onerror = () => setConnected(false);
       ws.onclose = () => {
         setConnected(false);
+        window.clearInterval(heartbeatTimer);
         if (!closed) {
           reconnectTimer = window.setTimeout(connect, 1200);
         }
@@ -180,20 +211,10 @@ export default function App() {
     return () => {
       closed = true;
       window.clearTimeout(reconnectTimer);
+      window.clearInterval(heartbeatTimer);
       ws?.close();
     };
   }, []);
-
-  const marker = useMemo(() => {
-    if (!map || !pose) return null;
-    const px = (pose.x - map.origin.x) / map.resolution;
-    const py = (pose.y - map.origin.y) / map.resolution;
-    return {
-      left: `${(px / map.width) * 100}%`,
-      top: `${100 - (py / map.height) * 100}%`,
-      transform: `translate(-50%, -50%) rotate(${pose.yaw}rad)`,
-    };
-  }, [map, pose]);
 
   const normalCount = stats.normal_count || Math.max(stats.session_total - stats.session_defects, 0);
   const binProgress = Math.min(100, (stats.defect_bin_load / Math.max(stats.defect_threshold, 1)) * 100);
@@ -214,11 +235,14 @@ export default function App() {
 
   async function submitText(event: FormEvent) {
     event.preventDefault();
+    if (pending) return;
     const userText = text.trim();
     if (!userText) return;
     setText("");
     const result = await post("/api/text-command", { text: userText });
-    setResponses((prev) => [{ type: "text_command", data: { ...result, user_text: userText } }, ...prev].slice(0, 8));
+    if (!connected) {
+      setResponses((prev) => [{ type: "text_command", data: { ...result, user_text: userText } }, ...prev].slice(0, 8));
+    }
   }
 
   return (
@@ -230,13 +254,13 @@ export default function App() {
         </div>
         <div className="topStatus">
           <span className={`pill ${connected ? "ok" : "danger"}`}>{connected ? "WebSocket Live" : "Reconnecting"}</span>
-          <span className={`pill ${process.running ? "ok" : "muted"}`}>{process.running ? `AQIS PID ${process.pid}` : "AQIS Stopped"}</span>
+          <span className={`pill ${process.running ? "ok" : "muted"}`}>{process.running ? `Monitoring PID ${process.pid}` : "Monitoring Stopped"}</span>
         </div>
       </header>
 
-      <section className="controls" aria-label="AQIS controls">
-        <button disabled={pending || process.running} onClick={() => post("/api/aqis/start")}>Start AQIS</button>
-        <button disabled={pending || !process.running} className="secondary" onClick={() => post("/api/aqis/stop")}>Stop</button>
+      <section className="controls" aria-label="Monitoring controls">
+        <button disabled={pending || process.running} onClick={() => post("/api/aqis/start")}>Start Monitoring</button>
+        <button disabled={pending || !process.running} className="secondary" onClick={() => post("/api/aqis/stop")}>Stop Monitoring</button>
         <button disabled={pending} className="dangerButton" onClick={() => post("/api/emergency_stop")}>Emergency Stop</button>
       </section>
 
@@ -245,9 +269,9 @@ export default function App() {
           <span>System</span>
           <strong>{stats.system_status}</strong>
         </article>
-        <article className={`statusTile ${stale(map?.stamp) ? "danger" : "ok"}`}>
-          <span>Map</span>
-          <strong>{ageLabel(map?.stamp)}</strong>
+        <article className={`statusTile ${realsenseSignal === "online" ? "ok" : realsenseSignal === "offline" ? "danger" : "muted"}`}>
+          <span>RealSense</span>
+          <strong>{realsenseSignal}</strong>
         </article>
         <article className={`statusTile ${stale(pose?.stamp) ? "danger" : "ok"}`}>
           <span>TurtleBot</span>
@@ -260,26 +284,39 @@ export default function App() {
       </section>
 
       <section className="mainGrid">
-        <article className="panel mapPanel">
+        <article className="panel dobotModelPanel">
           <div className="panelHeader">
-            <h2>Live SLAM Map</h2>
-            <span>{pose ? `${fixed(pose.x)}, ${fixed(pose.y)}` : "waiting for pose"}</span>
+            <h2>Dobot Action Monitor</h2>
+            <span>{dobot.stamp ? ageLabel(dobot.stamp) : "waiting"}</span>
           </div>
-          <div className="mapStage">
-            {map ? <img src={map.image} alt="Live occupancy grid map" /> : <div className="empty">Waiting for /map</div>}
-            {marker && <span className="robotMarker" style={marker} title="TurtleBot pose" />}
-          </div>
+          <DobotUrdfView status={dobot} />
           <dl className="detailList compact">
-            <div><dt>Source</dt><dd>{pose?.source ?? "-"}</dd></div>
-            <div><dt>Yaw</dt><dd>{fixed(pose?.yaw)}</dd></div>
-            <div><dt>Resolution</dt><dd>{map ? `${map.resolution} m/px` : "-"}</dd></div>
+            <div><dt>Tool</dt><dd>{dobot.gripper_status ? `Suction ${dobot.gripper_status}` : "Suction Cup"}</dd></div>
+            <div><dt>Alarms</dt><dd>{dobot.alarms?.length ? dobot.alarms.join(", ") : "Clear"}</dd></div>
+            <div><dt>TCP X</dt><dd>{fixed(dobot.tcp_pose?.x)}</dd></div>
+            <div><dt>TCP Y</dt><dd>{fixed(dobot.tcp_pose?.y)}</dd></div>
+            <div><dt>TCP Z</dt><dd>{fixed(dobot.tcp_pose?.z)}</dd></div>
+            <div><dt>TCP Yaw</dt><dd>{fixed(dobot.tcp_pose?.yaw)}</dd></div>
           </dl>
+          <div className="jointList mainJointList">
+            {(dobot.joints ?? []).slice(0, 5).map((joint) => (
+              <div className="jointRow" key={joint.name}>
+                <span>{joint.name}</span>
+                <meter min="-180" max="180" value={joint.position_deg} />
+                <b>{fixed(joint.position_deg, 1)} deg</b>
+              </div>
+            ))}
+            {!dobot.joints?.length && <p className="empty small">Waiting for /dobot_joint_states</p>}
+          </div>
         </article>
 
         <article className="panel qualityPanel">
           <div className="panelHeader">
             <h2>Defect Monitoring</h2>
-            <span>{percent(stats.defect_rate)}</span>
+            <div className="panelActions">
+              <span>{percent(stats.defect_rate)}</span>
+              <button disabled={pending} className="miniButton secondary" onClick={() => post("/api/stats/reset")}>Reset</button>
+            </div>
           </div>
           <div className="metricGrid">
             <div><span>Total</span><strong>{stats.session_total}</strong></div>
@@ -315,32 +352,30 @@ export default function App() {
             <h2>RealSense Inspection</h2>
             <span>MJPEG</span>
           </div>
-          <img className="stream" src={config.realsense_stream_url} alt="RealSense inspection stream" />
+          <img
+            className="stream"
+            src={config.realsense_stream_url}
+            alt="RealSense inspection stream"
+            onLoad={() => setRealsenseSignal("online")}
+            onError={() => setRealsenseSignal("offline")}
+          />
         </article>
       </section>
 
       <section className="lowerGrid">
         <article className="panel">
           <div className="panelHeader">
-            <h2>Dobot Magician</h2>
-            <span>{dobot.gripper_status ?? "gripper unknown"}</span>
+            <h2>TurtleBot Status</h2>
+            <span>{ageLabel(pose?.stamp)}</span>
           </div>
           <dl className="detailList">
-            <div><dt>TCP X</dt><dd>{fixed(dobot.tcp_pose?.x)}</dd></div>
-            <div><dt>TCP Y</dt><dd>{fixed(dobot.tcp_pose?.y)}</dd></div>
-            <div><dt>TCP Z</dt><dd>{fixed(dobot.tcp_pose?.z)}</dd></div>
-            <div><dt>Alarms</dt><dd>{dobot.alarms?.length ? dobot.alarms.join(", ") : "clear"}</dd></div>
+            <div><dt>Pose Source</dt><dd>{pose?.source ?? "-"}</dd></div>
+            <div><dt>Map Signal</dt><dd>{ageLabel(map?.stamp)}</dd></div>
+            <div><dt>X</dt><dd>{fixed(pose?.x)}</dd></div>
+            <div><dt>Y</dt><dd>{fixed(pose?.y)}</dd></div>
+            <div><dt>Yaw</dt><dd>{fixed(pose?.yaw)}</dd></div>
+            <div><dt>Resolution</dt><dd>{map ? `${map.resolution} m/px` : "-"}</dd></div>
           </dl>
-          <div className="jointList">
-            {(dobot.joints ?? []).slice(0, 5).map((joint) => (
-              <div className="jointRow" key={joint.name}>
-                <span>{joint.name}</span>
-                <meter min="-180" max="180" value={joint.position_deg} />
-                <b>{fixed(joint.position_deg, 1)} deg</b>
-              </div>
-            ))}
-            {!dobot.joints?.length && <p className="empty small">Waiting for /dobot_joint_states</p>}
-          </div>
         </article>
 
         <article className="panel commandPanel">
@@ -366,12 +401,6 @@ export default function App() {
             ))}
           </div>
         </article>
-      </section>
-
-      <section className="eventPanel">
-        {events.slice(0, 8).map((event, index) => (
-          <span key={`${event.type}-${index}`}>{event.type}</span>
-        ))}
       </section>
     </main>
   );

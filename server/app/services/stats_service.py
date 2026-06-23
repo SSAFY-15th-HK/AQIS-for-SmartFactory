@@ -54,6 +54,7 @@ class StatsService:
         color: str | None = None,
         part_id: str | None = None,
         allow_auto_dispatch: bool = True,
+        metadata: dict | None = None,
     ) -> dict:
         self.total += 1
         result = "defect" if is_defect else "normal"
@@ -74,6 +75,8 @@ class StatsService:
             "defect_rate": self.current()["defect_rate"],
             "defect_bin_load": self.defect_bin_load,
         }
+        if metadata:
+            detection.update(metadata)
         self.recent_detections = [detection, *self.recent_detections][:12]
 
         if allow_auto_dispatch and self.should_dispatch_agv():
