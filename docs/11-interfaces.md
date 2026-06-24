@@ -38,7 +38,6 @@
 
 - `HOME_POSE_X`, `HOME_POSE_Y` — 매핑 후 RViz에서 측정
 - `DROPOFF_POSE_X`, `DROPOFF_POSE_Y` — 매핑 후 측정
-- `DEFECT_COUNT_THRESHOLD` — 시연 흐름 따라 조정 (3~5 정도)
 
 ## ROS2 메시지 변경 절차
 

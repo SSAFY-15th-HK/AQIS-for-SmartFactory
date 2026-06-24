@@ -80,7 +80,7 @@ def schedule_agv_if_needed(before_status: str, *, source: str = "mock") -> None:
     if source == "robodk":
         return
     current = stats_service.current()
-    if before_status == "IDLE" and current["agv_status"] == "MOVING_TO_DEFECT_BIN":
+    if before_status == "IDLE" and current["agv_status"] == "MOVING_TO_PICKUP":
         try:
             asyncio.get_running_loop().create_task(run_agv_mission_background())
         except RuntimeError:
@@ -143,8 +143,6 @@ def detection_event_from_current(
     data.update(
         {
             "normal_count": current["normal_count"],
-            "defect_bin_load": current["defect_bin_load"],
-            "defect_threshold": current["defect_threshold"],
             "agv_status": current["agv_status"],
         }
     )
