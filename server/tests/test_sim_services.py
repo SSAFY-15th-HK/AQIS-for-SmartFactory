@@ -4,20 +4,27 @@ from app.services.stats_service import StatsService
 from app.services.text_command_service import TextCommandService
 
 
-def test_defect_bin_load_triggers_agv_then_resets_after_mission():
+def test_defect_counts_do_not_auto_dispatch_bin_mission():
     service = StatsService(defect_threshold=3, agv_step_delay=0)
 
     service.add_detection(is_defect=True, color="red")
     service.add_detection(is_defect=True, color="red")
     third = service.add_detection(is_defect=True, color="red")
 
-    assert third["defect_bin_load"] == 3
-    assert third["agv_status"] == "MOVING_TO_DEFECT_BIN"
+    assert third["session_defects"] == 3
+    assert "defect_bin_load" not in third
+    assert third["agv_status"] == "IDLE"
+
+
+def test_manual_agv_mission_still_runs_without_bin_counter():
+    service = StatsService(defect_threshold=3, agv_step_delay=0)
+    service.add_detection(is_defect=True, color="red")
+    service.dispatch_agv(manual=True)
 
     asyncio.run(service.finish_pending_agv_mission())
 
     current = service.current()
-    assert current["defect_bin_load"] == 0
+    assert "defect_bin_load" not in current
     assert current["completed_missions"] == 1
     assert current["agv_status"] == "IDLE"
 

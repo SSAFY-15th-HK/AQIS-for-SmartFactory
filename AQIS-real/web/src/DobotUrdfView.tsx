@@ -81,6 +81,9 @@ function prepareMeshMaterials(object: THREE.Object3D) {
     const prepare = (source: THREE.Material) => {
       const material = source.clone();
       if (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhongMaterial) {
+        material.color.r = Math.min(material.color.r, 1);
+        material.color.g = Math.min(material.color.g, 1);
+        material.color.b = Math.min(material.color.b, 1);
         material.side = THREE.DoubleSide;
       }
       return material;
@@ -88,6 +91,16 @@ function prepareMeshMaterials(object: THREE.Object3D) {
 
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(prepare) : prepare(mesh.material);
   });
+}
+
+function removeImportedSceneHelpers(object: THREE.Object3D) {
+  const removable: THREE.Object3D[] = [];
+  object.traverse((child) => {
+    if (child instanceof THREE.Light || child instanceof THREE.Camera) {
+      removable.push(child);
+    }
+  });
+  removable.forEach((child) => child.parent?.remove(child));
 }
 
 function jointName(name: string) {
@@ -111,11 +124,13 @@ export function DobotUrdfView({ status }: Props) {
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.NoToneMapping;
     renderer.shadowMap.enabled = true;
     container.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#f7f9fb");
+    scene.background = new THREE.Color("#050505");
 
     const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 8);
     camera.position.copy(HOME_CAMERA_POSITION);
@@ -127,21 +142,24 @@ export function DobotUrdfView({ status }: Props) {
     controls.maxDistance = 2.4;
     controls.saveState();
 
-    scene.add(new THREE.HemisphereLight("#ffffff", "#9aa7b4", 1.8));
-    const keyLight = new THREE.DirectionalLight("#ffffff", 2.0);
+    scene.add(new THREE.HemisphereLight("#f2f2ee", "#151515", 1.35));
+    const keyLight = new THREE.DirectionalLight("#ffffff", 2.4);
     keyLight.position.set(1.4, -1.2, 1.8);
     keyLight.castShadow = true;
     scene.add(keyLight);
+    const rimLight = new THREE.DirectionalLight("#ff6a2a", 1.1);
+    rimLight.position.set(-1.2, 0.8, 1.0);
+    scene.add(rimLight);
 
     const floor = new THREE.Mesh(
       new THREE.CircleGeometry(0.42, 64),
-      new THREE.MeshStandardMaterial({ color: "#e9eef2", roughness: 0.9 }),
+      new THREE.MeshStandardMaterial({ color: "#090909", roughness: 0.95, metalness: 0.1 }),
     );
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
 
-    const axes = new THREE.GridHelper(0.9, 12, "#9aa7b4", "#d5dde5");
+    const axes = new THREE.GridHelper(0.9, 12, "#ff5a1f", "#252525");
     axes.position.y = -0.001;
     scene.add(axes);
 
@@ -169,6 +187,7 @@ export function DobotUrdfView({ status }: Props) {
       }
       const object = collada.scene;
       object.scale.setScalar(1);
+      removeImportedSceneHelpers(object);
       prepareMeshMaterials(object);
       return object;
     }

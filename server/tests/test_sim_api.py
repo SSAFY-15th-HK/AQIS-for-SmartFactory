@@ -21,7 +21,7 @@ def drain_robodk_commands():
         pass
 
 
-def test_sim_detection_triggers_agv_and_text_command_status():
+def test_sim_detection_updates_quality_counts_without_bin_dispatch():
     stats_service.reset_all()
     drain_robodk_commands()
 
@@ -36,8 +36,9 @@ def test_sim_detection_triggers_agv_and_text_command_status():
         assert response["status"] == "ok"
 
     current = sim_status()
-    assert current["defect_bin_load"] == 3
-    assert current["agv_status"] in {"MOVING_TO_DEFECT_BIN", "IDLE"}
+    assert current["session_defects"] == 3
+    assert "defect_bin_load" not in current
+    assert current["agv_status"] == "IDLE"
 
     command = asyncio.run(text_command(TextCommandRequest(text="defect rate")))
     assert command["intent"] == "QUERY_DEFECT_RATE"
@@ -59,7 +60,7 @@ def test_normal_detection_is_processed_without_defect_dispatch():
     assert sim["session_total"] == 1
     assert sim["normal_count"] == 1
     assert sim["session_defects"] == 0
-    assert sim["defect_bin_load"] == 0
+    assert "defect_bin_load" not in sim
     assert sim["agv_status"] == "IDLE"
 
 

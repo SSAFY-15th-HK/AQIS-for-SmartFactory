@@ -34,10 +34,10 @@ class TextCommandService:
                 "action_executed": True,
             }
         if any(keyword in normalized for keyword in ["agv", "비워", "수거", "출동"]):
-            if current["defect_bin_load"] <= 0:
+            if current["session_defects"] <= 0:
                 return {
                     "intent": "DISPATCH_AGV",
-                    "message": "현재 수거할 불량품이 없습니다. Defect Bin Load는 0개입니다.",
+                    "message": "현재 수거할 불량품이 없습니다. 불량 카운트는 0개입니다.",
                     "action_executed": False,
                 }
             return {
@@ -62,7 +62,7 @@ class TextCommandService:
                 "message": (
                     f"현재 시스템 상태는 {current['system_status']}, "
                     f"AGV 상태는 {current['agv_status']}, "
-                    f"Defect Bin Load는 {current['defect_bin_load']}개입니다."
+                    f"불량 카운트는 {current['session_defects']}개입니다."
                 ),
                 "action_executed": False,
             }

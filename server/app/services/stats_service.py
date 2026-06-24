@@ -6,7 +6,7 @@ MissionCallback = Callable[[dict], Awaitable[None]]
 
 class StatsService:
     def __init__(self, defect_threshold: int = 3, agv_step_delay: float = 1.0) -> None:
-        self.defect_threshold = defect_threshold
+        _ = defect_threshold
         self.agv_step_delay = agv_step_delay
         self.reset_all()
 
@@ -14,7 +14,6 @@ class StatsService:
         self.total = 0
         self.defects = 0
         self.normal_count = 0
-        self.defect_bin_load = 0
         self.completed_missions = 0
         self.system_status = "STOPPED"
         self.conveyor_status = "OFF"
@@ -60,7 +59,6 @@ class StatsService:
         result = "defect" if is_defect else "normal"
         if is_defect:
             self.defects += 1
-            self.defect_bin_load += 1
         else:
             self.normal_count += 1
 
@@ -73,7 +71,6 @@ class StatsService:
             "session_defects": self.defects,
             "normal_count": self.normal_count,
             "defect_rate": self.current()["defect_rate"],
-            "defect_bin_load": self.defect_bin_load,
         }
         if metadata:
             detection.update(metadata)
@@ -84,20 +81,16 @@ class StatsService:
         return self.current()
 
     def should_dispatch_agv(self) -> bool:
-        return (
-            not self._mission_running
-            and self.agv_status == "IDLE"
-            and self.defect_bin_load >= self.defect_threshold
-        )
+        return False
 
     def dispatch_agv(self, manual: bool = False) -> dict:
         if self._mission_running:
             return self.current()
-        if manual and self.defect_bin_load <= 0:
+        if manual and self.defects <= 0:
             return self.current()
         self._mission_running = True
         self.current_mission_id = f"mission_{self.completed_missions + 1:03d}"
-        self.agv_status = "MOVING_TO_DEFECT_BIN"
+        self.agv_status = "MOVING_TO_PICKUP"
         self.agv_waypoint_index = None
         self.agv_waypoint_total = None
         self.agv_position = None
@@ -120,7 +113,6 @@ class StatsService:
 
         if status == "COMPLETED":
             self.completed_missions += 1
-            self.defect_bin_load = 0
             self._mission_running = False
             self.agv_status = "IDLE"
         else:
@@ -147,8 +139,8 @@ class StatsService:
             return self.current()
 
         for status in [
-            "MOVING_TO_DEFECT_BIN",
-            "LOADING_DEFECT_BIN",
+            "MOVING_TO_PICKUP",
+            "LOADING",
             "MOVING_TO_DROPOFF",
             "UNLOADING",
             "RETURNING_HOME",
@@ -161,7 +153,6 @@ class StatsService:
                 await asyncio.sleep(self.agv_step_delay)
 
         self.completed_missions += 1
-        self.defect_bin_load = 0
         self.agv_status = "IDLE"
         self._mission_running = False
         if callback:
@@ -181,8 +172,6 @@ class StatsService:
             "session_defects": self.defects,
             "normal_count": self.normal_count,
             "defect_rate": round(defect_rate, 4),
-            "defect_bin_load": self.defect_bin_load,
-            "defect_threshold": self.defect_threshold,
             "agv_status": self.agv_status,
             "current_mission_id": self.current_mission_id,
             "completed_missions": self.completed_missions,
@@ -202,7 +191,6 @@ class StatsService:
             "data": {
                 "mission_id": self.current_mission_id,
                 "status": self.agv_status,
-                "defect_bin_load": self.defect_bin_load,
                 "completed_missions": self.completed_missions,
                 "waypoint_index": self.agv_waypoint_index,
                 "waypoint_total": self.agv_waypoint_total,

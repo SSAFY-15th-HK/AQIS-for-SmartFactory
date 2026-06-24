@@ -1,4 +1,6 @@
 import asyncio
+import time
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -249,8 +251,44 @@ def test_defect_detection_stops_conveyor_then_uses_stopped_detection_for_dobot(m
     assert calls == {"stop": 1, "trigger": 1}
 
 
-def test_dobot_dynamic_pick_pose_uses_realsense_calibration():
+def test_stopped_pick_rejects_detection_captured_before_ready_time(monkeypatch):
+    start_monitoring_for_detection()
+    calls = {"stop": 0, "trigger": 0}
+
+    monkeypatch.setattr(conveyor, "stop", lambda: calls.__setitem__("stop", calls["stop"] + 1) or {"running": False, "sorter_position": "disabled", "command_ok": True})
+    monkeypatch.setattr(conveyor, "status", lambda: {"running": False, "sorter_position": "disabled", "command_ok": True})
+    monkeypatch.setattr(dobot_pick_place, "trigger", lambda detection=None: calls.__setitem__("trigger", calls["trigger"] + 1) or {"status": "started", "data": {"running": True, "last_trigger": detection or {}}})
+
+    handle_ros_detection({"is_defect": True, "label": "canlid_defective", "bbox": [100, 120, 80, 60], "timestamp": 100.0, "camera_point_m": [0.0, 0.0, 0.27]})
+    pending_stopped_pick["ready_at"] = 200.0
+
+    stale_events = handle_ros_detection({"is_defect": True, "label": "canlid_defective", "has_depth": True, "timestamp": 199.9, "camera_point_m": [0.002, 0.001, 0.27]})
+
+    assert stale_events == []
+    assert pending_stopped_pick["active"] is True
+    assert calls == {"stop": 1, "trigger": 0}
+
+    fresh_events = handle_ros_detection({"is_defect": True, "label": "canlid_defective", "has_depth": True, "timestamp": time.time(), "camera_point_m": [0.002, 0.001, 0.27]})
+
+    assert any(event["type"] == "dobot_pick_place_status" for event in fresh_events)
+    assert pending_stopped_pick["active"] is False
+    assert calls == {"stop": 1, "trigger": 1}
+
+
+def test_dobot_dynamic_pick_pose_uses_realsense_calibration(monkeypatch):
     service = DobotPickPlaceService("real", "mock")
+    import app.services.dobot_pick_place as dobot_pick_module
+
+    monkeypatch.setattr(
+        dobot_pick_module,
+        "settings",
+        replace(
+            dobot_pick_module.settings,
+            dobot_dynamic_pick_offset_x_mm=0.0,
+            dobot_dynamic_pick_offset_y_mm=0.0,
+            dobot_dynamic_pick_offset_z_mm=0.0,
+        ),
+    )
 
     pose = service._dynamic_pick_pose(
         {
@@ -264,6 +302,37 @@ def test_dobot_dynamic_pick_pose_uses_realsense_calibration():
     assert pose["y"] == pytest.approx(7.367, abs=0.01)
     assert pose["z"] == pytest.approx(-6.822, abs=0.01)
     assert pose["r"] == pytest.approx(7.0)
+
+
+def test_dobot_dynamic_pick_pose_applies_dobot_frame_offsets(monkeypatch):
+    service = DobotPickPlaceService("real", "mock")
+    import app.services.dobot_pick_place as dobot_pick_module
+
+    monkeypatch.setattr(
+        dobot_pick_module,
+        "settings",
+        replace(
+            dobot_pick_module.settings,
+            dobot_dynamic_pick_offset_x_mm=5.0,
+            dobot_dynamic_pick_offset_y_mm=-2.0,
+            dobot_dynamic_pick_offset_z_mm=1.5,
+        ),
+    )
+
+    pose = service._dynamic_pick_pose(
+        {
+            "has_depth": True,
+            "camera_point_m": [-0.0247, -0.0016, 0.277],
+        }
+    )
+
+    assert pose is not None
+    assert pose["x"] == pytest.approx(233.606, abs=0.01)
+    assert pose["y"] == pytest.approx(5.367, abs=0.01)
+    assert pose["z"] == pytest.approx(-5.322, abs=0.01)
+    assert pose["offset_x_mm"] == pytest.approx(5.0)
+    assert pose["offset_y_mm"] == pytest.approx(-2.0)
+    assert pose["offset_z_mm"] == pytest.approx(1.5)
 
 
 def test_ros_detection_ignores_empty_or_implicit_payloads():

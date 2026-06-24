@@ -1,0 +1,86 @@
+solid box
+  facet normal 0 0 0
+    outer loop
+      vertex -42.500000 -42.500000 -260.000000
+      vertex 42.500000 -42.500000 -260.000000
+      vertex 42.500000 42.500000 -260.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -42.500000 -42.500000 -260.000000
+      vertex 42.500000 42.500000 -260.000000
+      vertex -42.500000 42.500000 -260.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -42.500000 -42.500000 260.000000
+      vertex 42.500000 42.500000 260.000000
+      vertex 42.500000 -42.500000 260.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -42.500000 -42.500000 260.000000
+      vertex -42.500000 42.500000 260.000000
+      vertex 42.500000 42.500000 260.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -42.500000 -42.500000 -260.000000
+      vertex -42.500000 -42.500000 260.000000
+      vertex 42.500000 -42.500000 260.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -42.500000 -42.500000 -260.000000
+      vertex 42.500000 -42.500000 260.000000
+      vertex 42.500000 -42.500000 -260.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 42.500000 -42.500000 -260.000000
+      vertex 42.500000 -42.500000 260.000000
+      vertex 42.500000 42.500000 260.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 42.500000 -42.500000 -260.000000
+      vertex 42.500000 42.500000 260.000000
+      vertex 42.500000 42.500000 -260.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 42.500000 42.500000 -260.000000
+      vertex 42.500000 42.500000 260.000000
+      vertex -42.500000 42.500000 260.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 42.500000 42.500000 -260.000000
+      vertex -42.500000 42.500000 260.000000
+      vertex -42.500000 42.500000 -260.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -42.500000 42.500000 -260.000000
+      vertex -42.500000 42.500000 260.000000
+      vertex -42.500000 -42.500000 260.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -42.500000 42.500000 -260.000000
+      vertex -42.500000 -42.500000 260.000000
+      vertex -42.500000 -42.500000 -260.000000
+    endloop
+  endfacet
+endsolid box

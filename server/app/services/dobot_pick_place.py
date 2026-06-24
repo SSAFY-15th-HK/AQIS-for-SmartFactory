@@ -171,13 +171,19 @@ class DobotPickPlaceService:
             if settings.dobot_dynamic_z_enabled
             else settings.dobot_dynamic_pick_z / 1000.0
         )
+        offset_x = settings.dobot_dynamic_pick_offset_x_mm
+        offset_y = settings.dobot_dynamic_pick_offset_y_mm
+        offset_z = settings.dobot_dynamic_pick_offset_z_mm
         return {
-            "x": round(dobot_x_m * 1000.0, 3),
-            "y": round(dobot_y_m * 1000.0, 3),
-            "z": round(dobot_z_m * 1000.0, 3),
+            "x": round(dobot_x_m * 1000.0 + offset_x, 3),
+            "y": round(dobot_y_m * 1000.0 + offset_y, 3),
+            "z": round(dobot_z_m * 1000.0 + offset_z, 3),
             "r": settings.dobot_dynamic_tool_r,
             "camera_x": cam_x,
             "camera_y": cam_y,
+            "offset_x_mm": offset_x,
+            "offset_y_mm": offset_y,
+            "offset_z_mm": offset_z,
         }
 
     def _script_env(self, dynamic_pick: dict[str, float] | None = None) -> dict[str, str]:

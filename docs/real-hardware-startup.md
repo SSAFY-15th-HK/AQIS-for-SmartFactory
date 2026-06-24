@@ -89,7 +89,9 @@ Run on the laptop connected to RealSense:
 source /opt/ros/humble/setup.bash
 source ~/ssafy_ws/install/setup.bash
 export ROS_DOMAIN_ID=33
-ros2 launch integrate_prac realsense_yolo.launch.py
+ros2 launch integrate_prac realsense_yolo.launch.py \
+  roi_width:=220 \
+  roi_height:=180
 ```
 
 ### Terminal 8 — FastAPI Backend
@@ -147,7 +149,7 @@ REALSENSE_STREAM_URL=http://localhost:8080/stream?topic=/detection_image
 TURTLEBOT_VIEW_URL=http://192.168.110.173:8081/stream?topic=/image_raw
 ```
 
-Do not store or document the real LLM access token in this file.
+Use `server/.env.example` as the reference for the Dobot pick/place calibration values. Keep the real LLM access token only in `server/.env`; do not commit or document it.
 
 ## 1. Start Conveyor Controller
 
@@ -280,28 +282,60 @@ ros2 topic echo --once /dobot_alarms
 ros2 topic echo --once /gripper_status_rviz
 ```
 
+Home the Dobot before calibration or automatic pick/place:
+
+```bash
+ros2 service call /dobot_homing_service dobot_msgs/srv/ExecuteHomingProcedure
+```
+
 Before running the automatic workflow, verify one manual pick/place cycle with the current calibrated coordinates:
 
 ```bash
 python3 /home/ssafy/git/AQIS-for-SmartFactory/AQIS-real/scripts/dobot_pick_place_once.py
 ```
 
-Tune these values in `server/.env` for your conveyor geometry:
+Tune these values in `server/.env` for your conveyor geometry. The current setup uses RealSense `camera_point_m` to calculate the pick pose after the conveyor has fully stopped:
 
-```bash
+```env
 DOBOT_PICK_X=125.0
 DOBOT_PICK_Y=-180.0
-DOBOT_PICK_Z=30.0
+DOBOT_PICK_Z=-5.8
 DOBOT_PLACE_X=150.0
 DOBOT_PLACE_Y=190.0
 DOBOT_PLACE_Z=20.0
-DOBOT_SAFE_Z=60.0
+DOBOT_SAFE_Z=50.0
 DOBOT_HOME_X=200.0
 DOBOT_HOME_Y=0.0
 DOBOT_HOME_Z=100.0
-DOBOT_TOOL_R=0.0
+DOBOT_TOOL_R=7.0
+DOBOT_MOTION_TYPE=1
+DOBOT_VELOCITY_RATIO=0.2
+DOBOT_ACCELERATION_RATIO=0.2
+DOBOT_SUCTION_SETTLE_SEC=0.35
 DOBOT_RESUME_CONVEYOR_AFTER_PICK=true
+DOBOT_PICK_AFTER_STOP_DELAY_SEC=0.6
+DOBOT_PICK_MAX_DETECTION_AGE_SEC=3.0
+DOBOT_DYNAMIC_PICK_ENABLED=true
+DOBOT_DYNAMIC_PICK_Z=-7.8
+DOBOT_DYNAMIC_TOOL_R=7.0
+DOBOT_DYNAMIC_PICK_OFFSET_X_MM=0.0
+DOBOT_DYNAMIC_PICK_OFFSET_Y_MM=0.0
+DOBOT_DYNAMIC_PICK_OFFSET_Z_MM=0.0
+DOBOT_CAMERA_TO_DOBOT_X_CAM_X=0.06923808
+DOBOT_CAMERA_TO_DOBOT_X_CAM_Y=1.05444383
+DOBOT_CAMERA_TO_DOBOT_X_BIAS=0.23200291
+DOBOT_CAMERA_TO_DOBOT_Y_CAM_X=0.76906914
+DOBOT_CAMERA_TO_DOBOT_Y_CAM_Y=0.09692414
+DOBOT_CAMERA_TO_DOBOT_Y_BIAS=0.02651858
+DOBOT_DYNAMIC_Z_ENABLED=true
+DOBOT_CAMERA_TO_DOBOT_Z_CAM_X=-0.02862024
+DOBOT_CAMERA_TO_DOBOT_Z_CAM_Y=0.05172572
+DOBOT_CAMERA_TO_DOBOT_Z_BIAS=-0.00744611
 ```
+
+If you move the camera, Dobot, conveyor, suction cup, or home position, redo the camera-to-Dobot calibration points before trusting automatic pickup.
+
+For a small final correction after calibration, use the Dobot-frame offset values. Left/right correction is usually `DOBOT_DYNAMIC_PICK_OFFSET_Y_MM`; forward/back correction is usually `DOBOT_DYNAMIC_PICK_OFFSET_X_MM`.
 
 ## 6. Start RealSense YOLO Detection
 
@@ -312,15 +346,19 @@ source /opt/ros/humble/setup.bash
 source ~/ssafy_ws/install/setup.bash
 export ROS_DOMAIN_ID=33
 
-ros2 launch integrate_prac realsense_yolo.launch.py
+ros2 launch integrate_prac realsense_yolo.launch.py \
+  roi_width:=220 \
+  roi_height:=180
 ```
 
-This starts RealSense, YOLO detection, annotated image publishing, and `web_video_server` on port `8080`.
+This starts RealSense with aligned depth, YOLO detection, annotated image publishing, the center pick ROI, and `web_video_server` on port `8080`.
 
 Important topics:
 
 ```text
 /camera/camera/color/image_raw   RealSense raw color image
+/camera/camera/aligned_depth_to_color/image_raw
+/camera/camera/color/camera_info
 /detection_image                 YOLO annotated image for web stream
 /detection_results               legacy label stream
 /defect/detection                JSON event consumed by FastAPI
@@ -333,6 +371,14 @@ ros2 topic echo --once /defect/detection
 ros2 topic hz /detection_image
 ```
 
+For readable JSON:
+
+```bash
+ros2 topic echo --once /defect/detection --field data | sed -n '1p' | python3 -m json.tool
+```
+
+The JSON should include `roi_hit: true`, `has_depth: true`, `depth_m`, and `camera_point_m` before automatic Dobot pickup is enabled.
+
 Test stream in browser:
 
 ```text
@@ -343,7 +389,9 @@ If the model file is not in the repo root, pass the model path:
 
 ```bash
 ros2 launch integrate_prac realsense_yolo.launch.py \
-  model_path:=/home/ssafy/ssafy_ws/yolov5/runs/train/rgby_squares/weights/best.pt
+  model_path:=/home/ssafy/ssafy_ws/yolov5/runs/train/rgby_squares/weights/best.pt \
+  roi_width:=220 \
+  roi_height:=180
 ```
 
 ## 7. Start FastAPI Backend
@@ -355,6 +403,8 @@ cd /home/ssafy/git/AQIS-for-SmartFactory/server
 source ~/.bashrc
 .venv-ros/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+Use `.venv-ros` for real hardware. The plain `.venv` can run FastAPI, but it may not load ROS Humble `rclpy`.
 
 Verify:
 
@@ -377,7 +427,7 @@ The backend subscribes to:
 /gripper_status_rviz
 ```
 
-When `/defect/detection` reports a normal canlid, FastAPI updates the web quality panel and leaves the conveyor moving. When it reports an abnormal canlid, FastAPI stops the conveyor, triggers the Dobot suction-cup pick/place cycle, and then resumes the conveyor if `DOBOT_RESUME_CONVEYOR_AFTER_PICK=true`.
+When `/defect/detection` reports a normal canlid, FastAPI updates the web quality panel and leaves the conveyor moving. When it reports an abnormal canlid while monitoring is running, FastAPI stops the conveyor first, waits `DOBOT_PICK_AFTER_STOP_DELAY_SEC`, then uses the next fresh stopped detection with `camera_point_m` to trigger the Dobot suction-cup pick/place cycle. The conveyor resumes after pickup if `DOBOT_RESUME_CONVEYOR_AFTER_PICK=true`.
 
 ## 8. Start Web Dashboard
 
@@ -443,6 +493,26 @@ If RealSense stream does not show:
 ```bash
 ros2 topic list | grep detection_image
 curl -I "http://localhost:8080/stream?topic=/detection_image"
+```
+
+If RealSense detects objects but Dobot does not pick:
+
+```bash
+ros2 topic echo --once /defect/detection --field data | sed -n '1p' | python3 -m json.tool
+```
+
+Check that the detection is inside the ROI and has depth:
+
+```text
+roi_hit: true
+has_depth: true
+camera_point_m: [x, y, z]
+```
+
+If `has_depth` is false, verify the aligned depth topic:
+
+```bash
+ros2 topic echo --once /camera/camera/aligned_depth_to_color/image_raw
 ```
 
 If conveyor does not move:

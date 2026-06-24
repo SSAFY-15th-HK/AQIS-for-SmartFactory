@@ -12,7 +12,6 @@ class Settings:
     vision_mode: str = os.getenv("VISION_MODE", "mock")
     robot_mode: str = os.getenv("ROBOT_MODE", "mock")
     voice_mode: str = os.getenv("VOICE_MODE", "text")
-    defect_count_threshold: int = int(os.getenv("DEFECT_COUNT_THRESHOLD", "5"))
     rpi_base_url: str = os.getenv("RPI_BASE_URL", "http://192.168.0.10:5000")
     mjpeg_stream_url: str = os.getenv("MJPEG_STREAM_URL", "http://localhost:8080/stream")
     realsense_stream_url: str = os.getenv("REALSENSE_STREAM_URL", os.getenv("MJPEG_STREAM_URL", "http://localhost:8080/stream"))
@@ -45,9 +44,13 @@ class Settings:
     dobot_suction_settle_sec: float = float(os.getenv("DOBOT_SUCTION_SETTLE_SEC", "0.35"))
     dobot_resume_conveyor_after_pick: bool = os.getenv("DOBOT_RESUME_CONVEYOR_AFTER_PICK", "true").lower() in {"1", "true", "yes", "on"}
     dobot_pick_after_stop_delay_sec: float = float(os.getenv("DOBOT_PICK_AFTER_STOP_DELAY_SEC", "0.6"))
+    dobot_pick_max_detection_age_sec: float = float(os.getenv("DOBOT_PICK_MAX_DETECTION_AGE_SEC", "3.0"))
     dobot_dynamic_pick_enabled: bool = os.getenv("DOBOT_DYNAMIC_PICK_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
     dobot_dynamic_pick_z: float = float(os.getenv("DOBOT_DYNAMIC_PICK_Z", "-5.8"))
     dobot_dynamic_tool_r: float = float(os.getenv("DOBOT_DYNAMIC_TOOL_R", "7.0"))
+    dobot_dynamic_pick_offset_x_mm: float = float(os.getenv("DOBOT_DYNAMIC_PICK_OFFSET_X_MM", "0.0"))
+    dobot_dynamic_pick_offset_y_mm: float = float(os.getenv("DOBOT_DYNAMIC_PICK_OFFSET_Y_MM", "0.0"))
+    dobot_dynamic_pick_offset_z_mm: float = float(os.getenv("DOBOT_DYNAMIC_PICK_OFFSET_Z_MM", "0.0"))
     dobot_camera_to_dobot_x_cam_x: float = float(os.getenv("DOBOT_CAMERA_TO_DOBOT_X_CAM_X", "0.054765711"))
     dobot_camera_to_dobot_x_cam_y: float = float(os.getenv("DOBOT_CAMERA_TO_DOBOT_X_CAM_Y", "0.911088412"))
     dobot_camera_to_dobot_x_bias: float = float(os.getenv("DOBOT_CAMERA_TO_DOBOT_X_BIAS", "0.233068744"))

@@ -202,6 +202,22 @@ def expanded_detection_payloads(payload: dict) -> list[dict]:
     return [{**shared, **item} for item in detections if isinstance(item, dict)]
 
 
+def detection_timestamp(payload: dict) -> float | None:
+    try:
+        return float(payload["timestamp"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def is_fresh_stopped_detection(payload: dict, now: float) -> bool:
+    timestamp = detection_timestamp(payload)
+    if timestamp is None:
+        return True
+    if timestamp < float(pending_stopped_pick["ready_at"]):
+        return False
+    return now - timestamp <= settings.dobot_pick_max_detection_age_sec
+
+
 def handle_ros_detection(payload: dict) -> list[dict]:
     if stats_service.current().get("system_status") != "RUNNING":
         return []
@@ -218,8 +234,9 @@ def handle_ros_detection(payload: dict) -> list[dict]:
     defect_items = [item for item in normalized_items if item["is_defect"]]
 
     if pending_stopped_pick["active"]:
-        if defect_items and now >= float(pending_stopped_pick["ready_at"]):
-            stopped_detection = next((item for item in defect_items if item.get("has_depth")), defect_items[0])
+        stopped_items = [item for item in defect_items if is_fresh_stopped_detection(item, now)]
+        if stopped_items and now >= float(pending_stopped_pick["ready_at"]):
+            stopped_detection = next((item for item in stopped_items if item.get("has_depth")), stopped_items[0])
             pick_result = dobot_pick_place.trigger(stopped_detection)
             reset_pending_stopped_pick()
             return [
@@ -494,7 +511,7 @@ async def text_command(payload: TextCommandRequest) -> dict:
             action_status = "error"
         stats_service.stop_simulation()
     elif intent == "DISPATCH_AGV":
-        if stats_service.current()["defect_bin_load"] <= 0:
+        if stats_service.current()["session_defects"] <= 0:
             action_status = "blocked"
         else:
             stats_service.dispatch_agv(manual=True)
