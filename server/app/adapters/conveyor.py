@@ -34,12 +34,12 @@ class MockConveyorAdapter:
         return self.status()
 
     def sort_normal(self) -> dict:
-        self.sorter_position = "normal"
+        self.sorter_position = "disabled"
         self.last_command_ok = True
         return self.status()
 
     def sort_defect(self) -> dict:
-        self.sorter_position = "defect"
+        self.sorter_position = "disabled"
         self.last_command_ok = True
         return self.status()
 
@@ -101,13 +101,15 @@ class RealConveyorAdapter(MockConveyorAdapter):
         return super().status()
 
     def sort_normal(self) -> dict:
-        self.sorter_position = "normal"
-        self._post("/sort/normal")
+        self.sorter_position = "disabled"
+        self.last_error = None
+        self.last_command_ok = True
         return super().status()
 
     def sort_defect(self) -> dict:
-        self.sorter_position = "defect"
-        self._post("/sort/defect")
+        self.sorter_position = "disabled"
+        self.last_error = None
+        self.last_command_ok = True
         return super().status()
 
     def emergency_stop(self) -> dict:

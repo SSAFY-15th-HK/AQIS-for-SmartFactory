@@ -102,7 +102,6 @@ export function DobotUrdfView({ status }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const jointsRef = useRef<Map<string, UrdfJoint>>(new Map());
   const sceneRootRef = useRef<THREE.Group | null>(null);
-  const tcpMarkerRef = useRef<THREE.Mesh | null>(null);
   const alarmRef = useRef(false);
   const [loadError, setLoadError] = useState("");
 
@@ -149,14 +148,6 @@ export function DobotUrdfView({ status }: Props) {
     const root = new THREE.Group();
     sceneRootRef.current = root;
     scene.add(root);
-
-    const tcpMarker = new THREE.Mesh(
-      new THREE.SphereGeometry(0.012, 24, 24),
-      new THREE.MeshStandardMaterial({ color: "#1473e6", emissive: "#0b3d77", emissiveIntensity: 0.22 }),
-    );
-    tcpMarker.visible = false;
-    tcpMarkerRef.current = tcpMarker;
-    scene.add(tcpMarker);
 
     const resize = () => {
       const { width, height } = container.getBoundingClientRect();
@@ -289,7 +280,6 @@ export function DobotUrdfView({ status }: Props) {
       });
       jointsRef.current.clear();
       sceneRootRef.current = null;
-      tcpMarkerRef.current = null;
     };
   }, []);
 
@@ -308,14 +298,7 @@ export function DobotUrdfView({ status }: Props) {
       joint.group.rotation.copy(joint.originRotation);
       joint.group.rotateOnAxis(joint.axis, angle);
     });
-
-    const tcp = status.tcp_pose;
-    const marker = tcpMarkerRef.current;
-    if (marker && tcp) {
-      marker.visible = true;
-      marker.position.copy(rosVectorToThree([tcp.x, tcp.y, tcp.z]));
-    }
-  }, [status.joints, status.tcp_pose]);
+  }, [status.joints]);
 
   useEffect(() => {
     alarmRef.current = Boolean(status.alarms?.length);
