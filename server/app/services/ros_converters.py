@@ -64,9 +64,19 @@ def occupancy_grid_to_event(msg: Any) -> dict:
                 "y": float(origin.position.y),
                 "yaw": quaternion_to_yaw(origin.orientation),
             },
-            "stamp": time.time(),
+            "stamp": ros_stamp_seconds(msg, fallback=time.time()),
         },
     }
+
+
+def ros_stamp_seconds(msg: Any, fallback: float | None = None) -> float:
+    header = getattr(msg, "header", None)
+    stamp = getattr(header, "stamp", None)
+    sec = int(getattr(stamp, "sec", 0) or 0)
+    nanosec = int(getattr(stamp, "nanosec", 0) or 0)
+    if sec or nanosec:
+        return sec + nanosec / 1_000_000_000.0
+    return time.time() if fallback is None else fallback
 
 
 def quaternion_to_yaw(q: Any) -> float:
@@ -90,7 +100,7 @@ def pose_to_turtlebot_event(msg: Any, source: str) -> dict:
             "y": float(pose.position.y),
             "z": float(getattr(pose.position, "z", 0.0)),
             "yaw": quaternion_to_yaw(pose.orientation),
-            "stamp": time.time(),
+            "stamp": ros_stamp_seconds(msg, fallback=time.time()),
         },
     }
 
@@ -107,7 +117,7 @@ def transform_to_turtlebot_event(msg: Any, source: str) -> dict:
             "y": float(translation.y),
             "z": float(getattr(translation, "z", 0.0)),
             "yaw": quaternion_to_yaw(rotation),
-            "stamp": time.time(),
+            "stamp": ros_stamp_seconds(msg, fallback=time.time()),
         },
     }
 

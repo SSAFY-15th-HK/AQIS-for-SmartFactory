@@ -167,13 +167,13 @@ curl -X POST http://192.168.110.151:5000/conveyor/start
 curl -X POST http://192.168.110.151:5000/conveyor/stop
 ```
 
-Optional sorter tests:
+Emergency stop test:
 
 ```bash
-curl -X POST http://192.168.110.151:5000/sort/normal
-curl -X POST http://192.168.110.151:5000/sort/defect
 curl -X POST http://192.168.110.151:5000/emergency_stop
 ```
+
+The old servo separator endpoints are intentionally disabled in the current hardware flow. Defective canlids are removed by Dobot pick-and-place after the conveyor stops.
 
 ## 2. Start TurtleBot Base
 
@@ -280,6 +280,29 @@ ros2 topic echo --once /dobot_alarms
 ros2 topic echo --once /gripper_status_rviz
 ```
 
+Before running the automatic workflow, verify one manual pick/place cycle with the current calibrated coordinates:
+
+```bash
+python3 /home/ssafy/git/AQIS-for-SmartFactory/AQIS-real/scripts/dobot_pick_place_once.py
+```
+
+Tune these values in `server/.env` for your conveyor geometry:
+
+```bash
+DOBOT_PICK_X=125.0
+DOBOT_PICK_Y=-180.0
+DOBOT_PICK_Z=30.0
+DOBOT_PLACE_X=150.0
+DOBOT_PLACE_Y=190.0
+DOBOT_PLACE_Z=20.0
+DOBOT_SAFE_Z=60.0
+DOBOT_HOME_X=200.0
+DOBOT_HOME_Y=0.0
+DOBOT_HOME_Z=100.0
+DOBOT_TOOL_R=0.0
+DOBOT_RESUME_CONVEYOR_AFTER_PICK=true
+```
+
 ## 6. Start RealSense YOLO Detection
 
 On the laptop:
@@ -354,7 +377,7 @@ The backend subscribes to:
 /gripper_status_rviz
 ```
 
-When `/defect/detection` reports a defect, FastAPI updates the web quality panel, selects the defect sorter path, and stops the conveyor.
+When `/defect/detection` reports a normal canlid, FastAPI updates the web quality panel and leaves the conveyor moving. When it reports an abnormal canlid, FastAPI stops the conveyor, triggers the Dobot suction-cup pick/place cycle, and then resumes the conveyor if `DOBOT_RESUME_CONVEYOR_AFTER_PICK=true`.
 
 ## 8. Start Web Dashboard
 
@@ -377,7 +400,9 @@ From another computer on the same network, open:
 http://<LAPTOP_IP>:5173
 ```
 
-The dashboard **Start Monitoring** button should be used after the hardware terminals above are already running. In this real-hardware setup it starts a lightweight monitoring session in FastAPI; it should not relaunch TurtleBot, Dobot, RealSense, or `web_video_server`, because duplicate hardware launch processes can steal the camera device or collide on MJPEG ports. The API path is still `/api/aqis/start` for compatibility.
+The dashboard **Start Monitoring** button should be used after the hardware terminals above are already running. In this real-hardware setup it starts a lightweight monitoring session in FastAPI and starts the conveyor. It should not relaunch TurtleBot, Dobot, RealSense, or `web_video_server`, because duplicate hardware launch processes can steal the camera device or collide on MJPEG ports. The API path is still `/api/aqis/start` for compatibility.
+
+The dashboard **Stop Monitoring** button stops the monitoring session, stops the conveyor, and stops any active Dobot pick/place client.
 
 ## Quick Health Checklist
 
@@ -396,7 +421,7 @@ Expected web status:
 
 ```text
 WebSocket Live
-Map live after /map publishes
+RealSense online after /detection_image stream loads
 TurtleBot live after /odom or /amcl_pose publishes
 Dobot live after Dobot topics publish
 RealSense Inspection shows /detection_image stream

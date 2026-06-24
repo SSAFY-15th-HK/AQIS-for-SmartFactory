@@ -9,8 +9,11 @@ from app.main import (
     aqis_status,
     conveyor,
     detection_deduper,
+    dobot_pick_place,
     handle_ros_detection,
+    pending_stopped_pick,
     reset_stats,
+    reset_pending_stopped_pick,
     start_aqis,
     start_conveyor,
     stop_aqis,
@@ -18,6 +21,7 @@ from app.main import (
     text_command,
 )
 from app.services.detection_deduper import DetectionDeduper
+from app.services.dobot_pick_place import DobotPickPlaceService
 from app.services.ros_converters import (
     alarms_to_partial,
     joint_state_to_dobot_partial,
@@ -28,10 +32,55 @@ from app.services.stats_service import stats_service
 
 
 @pytest.fixture(autouse=True)
-def reset_detection_deduper():
+def isolate_hardware_side_effects(monkeypatch):
     detection_deduper.reset()
+
+    conveyor_state = {
+        "running": False,
+        "mode": "mock",
+        "sorter_position": "normal",
+        "speed": 0.5,
+        "last_error": None,
+        "command_ok": True,
+    }
+
+    def conveyor_status():
+        return dict(conveyor_state)
+
+    def conveyor_start():
+        conveyor_state["running"] = True
+        return conveyor_status()
+
+    def conveyor_stop():
+        conveyor_state["running"] = False
+        return conveyor_status()
+
+    def conveyor_emergency_stop():
+        conveyor_state["running"] = False
+        conveyor_state["sorter_position"] = "normal"
+        return conveyor_status()
+
+    def conveyor_sort_normal():
+        conveyor_state["sorter_position"] = "normal"
+        return conveyor_status()
+
+    def conveyor_sort_defect():
+        conveyor_state["sorter_position"] = "defect"
+        return conveyor_status()
+
+    monkeypatch.setattr(conveyor, "status", conveyor_status)
+    monkeypatch.setattr(conveyor, "start", conveyor_start)
+    monkeypatch.setattr(conveyor, "stop", conveyor_stop)
+    monkeypatch.setattr(conveyor, "emergency_stop", conveyor_emergency_stop)
+    monkeypatch.setattr(conveyor, "sort_normal", conveyor_sort_normal)
+    monkeypatch.setattr(conveyor, "sort_defect", conveyor_sort_defect)
+    monkeypatch.setattr(dobot_pick_place, "trigger", lambda detection=None: {"status": "started", "data": {"running": True, "last_trigger": detection or {}}})
+    monkeypatch.setattr(dobot_pick_place, "stop", lambda timeout_sec=2.0: {"status": "stopped", "data": {"running": False}})
+    monkeypatch.setattr(dobot_pick_place, "status", lambda: {"enabled": False, "mode": "mock", "running": False})
+
     yield
     detection_deduper.reset()
+    reset_pending_stopped_pick()
 
 
 def pose(x=0.0, y=0.0, z=0.0, w=1.0):
@@ -39,6 +88,12 @@ def pose(x=0.0, y=0.0, z=0.0, w=1.0):
         position=SimpleNamespace(x=x, y=y, z=0.0),
         orientation=SimpleNamespace(x=0.0, y=0.0, z=z, w=w),
     )
+
+
+def start_monitoring_for_detection():
+    stats_service.reset_all()
+    reset_pending_stopped_pick()
+    stats_service.start_simulation()
 
 
 def test_occupancy_grid_to_map_event_contains_png_and_metadata():
@@ -77,6 +132,7 @@ def test_dobot_joint_and_alarm_converters():
 
 def test_transform_to_turtlebot_event_uses_map_frame_translation():
     msg = SimpleNamespace(
+        header=SimpleNamespace(stamp=SimpleNamespace(sec=1782106605, nanosec=615789294)),
         transform=SimpleNamespace(
             translation=SimpleNamespace(x=1.25, y=-0.5, z=0.0),
             rotation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
@@ -90,10 +146,12 @@ def test_transform_to_turtlebot_event_uses_map_frame_translation():
     assert event["data"]["x"] == 1.25
     assert event["data"]["y"] == -0.5
     assert event["data"]["yaw"] == 0.0
+    assert event["data"]["stamp"] == pytest.approx(1782106605.615789294)
 
 
 def test_aqis_process_endpoints_with_mock_command(monkeypatch):
     state = {"running": False, "pid": None, "returncode": None}
+    conveyor_calls = {"start": 0, "stop": 0}
 
     def fake_status():
         return {**state, "command": "mock", "started_at": None, "stopped_at": None}
@@ -109,11 +167,14 @@ def test_aqis_process_endpoints_with_mock_command(monkeypatch):
     monkeypatch.setattr(aqis_process, "status", fake_status)
     monkeypatch.setattr(aqis_process, "start", fake_start)
     monkeypatch.setattr(aqis_process, "stop", fake_stop)
+    monkeypatch.setattr(conveyor, "start", lambda: conveyor_calls.__setitem__("start", conveyor_calls["start"] + 1) or {"running": True, "command_ok": True})
+    monkeypatch.setattr(conveyor, "stop", lambda: conveyor_calls.__setitem__("stop", conveyor_calls["stop"] + 1) or {"running": False, "command_ok": True})
     stats_service.reset_all()
 
     started = asyncio.run(start_aqis())
     assert started["status"] == "started"
     assert started["process"]["running"] is True
+    assert conveyor_calls["start"] == 1
 
     status = aqis_status()
     assert status["process"]["running"] is True
@@ -121,6 +182,7 @@ def test_aqis_process_endpoints_with_mock_command(monkeypatch):
     stopped = asyncio.run(stop_aqis())
     assert stopped["status"] == "stopped"
     assert stopped["process"]["running"] is False
+    assert conveyor_calls["stop"] == 1
 
 
 def test_text_command_query_and_emergency_stop():
@@ -137,7 +199,7 @@ def test_text_command_query_and_emergency_stop():
 
 
 def test_ros_detection_preserves_realsense_metadata():
-    stats_service.reset_all()
+    start_monitoring_for_detection()
     payload = {
         "is_defect": True,
         "defect_class": "red",
@@ -164,8 +226,48 @@ def test_ros_detection_preserves_realsense_metadata():
     assert recent["bbox"] == [11, 22, 33, 44]
 
 
+def test_defect_detection_stops_conveyor_then_uses_stopped_detection_for_dobot(monkeypatch):
+    start_monitoring_for_detection()
+    calls = {"stop": 0, "trigger": 0}
+
+    monkeypatch.setattr(conveyor, "stop", lambda: calls.__setitem__("stop", calls["stop"] + 1) or {"running": False, "sorter_position": "defect", "command_ok": True})
+    monkeypatch.setattr(conveyor, "status", lambda: {"running": False, "sorter_position": "defect", "command_ok": True})
+    monkeypatch.setattr(dobot_pick_place, "trigger", lambda detection=None: calls.__setitem__("trigger", calls["trigger"] + 1) or {"status": "started", "data": {"running": True, "last_trigger": detection or {}}})
+
+    first_events = handle_ros_detection({"is_defect": True, "label": "canlid_defective", "bbox": [100, 120, 80, 60], "camera_point_m": [0.0, 0.0, 0.27]})
+
+    assert any(event["type"] == "detection" for event in first_events)
+    assert any(event["type"] == "stopped_pick_status" for event in first_events)
+    assert pending_stopped_pick["active"] is True
+    assert calls == {"stop": 1, "trigger": 0}
+
+    pending_stopped_pick["ready_at"] = 0.0
+    second_events = handle_ros_detection({"is_defect": True, "label": "canlid_defective", "bbox": [103, 122, 80, 60], "has_depth": True, "camera_point_m": [0.002, 0.001, 0.27]})
+
+    assert any(event["type"] == "dobot_pick_place_status" for event in second_events)
+    assert pending_stopped_pick["active"] is False
+    assert calls == {"stop": 1, "trigger": 1}
+
+
+def test_dobot_dynamic_pick_pose_uses_realsense_calibration():
+    service = DobotPickPlaceService("real", "mock")
+
+    pose = service._dynamic_pick_pose(
+        {
+            "has_depth": True,
+            "camera_point_m": [-0.0247, -0.0016, 0.277],
+        }
+    )
+
+    assert pose is not None
+    assert pose["x"] == pytest.approx(228.606, abs=0.01)
+    assert pose["y"] == pytest.approx(7.367, abs=0.01)
+    assert pose["z"] == pytest.approx(-6.822, abs=0.01)
+    assert pose["r"] == pytest.approx(7.0)
+
+
 def test_ros_detection_ignores_empty_or_implicit_payloads():
-    stats_service.reset_all()
+    start_monitoring_for_detection()
 
     assert handle_ros_detection({}) == []
     assert handle_ros_detection({"detections": []}) == []
@@ -179,7 +281,7 @@ def test_ros_detection_ignores_empty_or_implicit_payloads():
 
 
 def test_ros_detection_counts_explicit_normal_result():
-    stats_service.reset_all()
+    start_monitoring_for_detection()
 
     events = handle_ros_detection({"result": "normal", "color": "blue", "confidence": 0.87})
     detection_event = next(event for event in events if event["type"] == "detection")
@@ -192,7 +294,7 @@ def test_ros_detection_counts_explicit_normal_result():
 
 
 def test_ros_detection_dedupes_same_tracked_object():
-    stats_service.reset_all()
+    start_monitoring_for_detection()
     payload = {
         "track_id": 7,
         "is_defect": True,
@@ -210,13 +312,14 @@ def test_ros_detection_dedupes_same_tracked_object():
 
 
 def test_ros_detection_dedupes_same_bbox_without_track_id():
-    stats_service.reset_all()
+    start_monitoring_for_detection()
     first = {"is_defect": True, "label": "scratch", "bbox": [100, 120, 80, 60], "confidence": 0.93}
     overlap = {"is_defect": True, "label": "scratch", "bbox": [108, 124, 80, 60], "confidence": 0.91}
     separate = {"is_defect": True, "label": "scratch", "bbox": [280, 120, 80, 60], "confidence": 0.94}
 
     assert handle_ros_detection(first)
     assert handle_ros_detection(overlap) == []
+    reset_pending_stopped_pick()
     assert handle_ros_detection(separate)
 
     current = stats_service.current()
@@ -225,7 +328,7 @@ def test_ros_detection_dedupes_same_bbox_without_track_id():
 
 
 def test_ros_detection_counts_multiple_objects_in_batch():
-    stats_service.reset_all()
+    start_monitoring_for_detection()
     payload = {
         "source": "realsense_yolo",
         "image_size": [640, 480],
@@ -245,14 +348,28 @@ def test_ros_detection_counts_multiple_objects_in_batch():
 
 
 def test_reset_stats_clears_counts_and_dedupe_cache():
-    stats_service.reset_all()
+    start_monitoring_for_detection()
     payload = {"is_defect": True, "label": "canlid_defective", "bbox": [100, 120, 80, 60]}
 
     assert handle_ros_detection(payload)
     assert asyncio.run(reset_stats())["status"] == "ok"
     assert stats_service.current()["session_total"] == 0
+    stats_service.start_simulation()
     assert handle_ros_detection(payload)
     assert stats_service.current()["session_total"] == 1
+
+
+def test_ros_detection_ignored_when_monitoring_stopped(monkeypatch):
+    stats_service.reset_all()
+    calls = {"stop": 0, "trigger": 0}
+    monkeypatch.setattr(conveyor, "stop", lambda: calls.__setitem__("stop", calls["stop"] + 1) or {"running": False})
+    monkeypatch.setattr(dobot_pick_place, "trigger", lambda detection=None: calls.__setitem__("trigger", calls["trigger"] + 1) or {"running": True})
+
+    events = handle_ros_detection({"is_defect": True, "label": "canlid_defective", "camera_point_m": [0.0, 0.0, 0.27]})
+
+    assert events == []
+    assert calls == {"stop": 0, "trigger": 0}
+    assert stats_service.current()["session_total"] == 0
 
 
 def test_detection_deduper_refreshes_duplicate_window():

@@ -79,16 +79,16 @@ const initialStats: Stats = {
   recent_detections: [],
 };
 
-function ageLabel(stamp?: number): string {
+function ageLabel(stamp?: number, nowMs = Date.now()): string {
   if (!stamp) return "no signal";
-  const age = Math.max(0, Date.now() / 1000 - stamp);
+  const age = Math.max(0, nowMs / 1000 - stamp);
   if (age < 1) return "live";
   return `${age.toFixed(0)}s ago`;
 }
 
-function stale(stamp?: number, limit = 5): boolean {
+function stale(stamp?: number, limit = 5, nowMs = Date.now()): boolean {
   if (!stamp) return true;
-  return Date.now() / 1000 - stamp > limit;
+  return nowMs / 1000 - stamp > limit;
 }
 
 function percent(value: number): string {
@@ -104,6 +104,21 @@ function tone(value: string): string {
   if (normalized.includes("error") || normalized.includes("stop") || normalized.includes("offline")) return "danger";
   if (normalized.includes("running") || normalized.includes("live") || normalized.includes("idle")) return "ok";
   return "muted";
+}
+
+function browserReachableUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const pageHost = window.location.hostname;
+    const pageIsLocal = pageHost === "localhost" || pageHost === "127.0.0.1";
+    const urlIsLocal = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+    if (urlIsLocal && !pageIsLocal) {
+      parsed.hostname = pageHost;
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
 }
 
 export default function App() {
@@ -123,6 +138,12 @@ export default function App() {
   const [pending, setPending] = useState(false);
   const [text, setText] = useState("");
   const [responses, setResponses] = useState<AqisEvent[]>([]);
+  const [clock, setClock] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -218,6 +239,10 @@ export default function App() {
 
   const normalCount = stats.normal_count || Math.max(stats.session_total - stats.session_defects, 0);
   const binProgress = Math.min(100, (stats.defect_bin_load / Math.max(stats.defect_threshold, 1)) * 100);
+  const turtlebotStale = stale(pose?.stamp, 5, clock);
+  const dobotStale = stale(dobot.stamp, 5, clock);
+  const turtlebotStreamUrl = browserReachableUrl(config.turtlebot_view_url);
+  const realsenseStreamUrl = browserReachableUrl(config.realsense_stream_url);
 
   async function post(path: string, body?: unknown) {
     setPending(true);
@@ -273,13 +298,13 @@ export default function App() {
           <span>RealSense</span>
           <strong>{realsenseSignal}</strong>
         </article>
-        <article className={`statusTile ${stale(pose?.stamp) ? "danger" : "ok"}`}>
+        <article className={`statusTile ${turtlebotStale ? "danger" : "ok"}`}>
           <span>TurtleBot</span>
-          <strong>{ageLabel(pose?.stamp)}</strong>
+          <strong>{ageLabel(pose?.stamp, clock)}</strong>
         </article>
-        <article className={`statusTile ${stale(dobot.stamp) ? "danger" : "ok"}`}>
+        <article className={`statusTile ${dobotStale ? "danger" : "ok"}`}>
           <span>Dobot</span>
-          <strong>{ageLabel(dobot.stamp)}</strong>
+          <strong>{ageLabel(dobot.stamp, clock)}</strong>
         </article>
       </section>
 
@@ -287,7 +312,7 @@ export default function App() {
         <article className="panel dobotModelPanel">
           <div className="panelHeader">
             <h2>Dobot Action Monitor</h2>
-            <span>{dobot.stamp ? ageLabel(dobot.stamp) : "waiting"}</span>
+            <span>{dobot.stamp ? ageLabel(dobot.stamp, clock) : "waiting"}</span>
           </div>
           <DobotUrdfView status={dobot} />
           <dl className="detailList compact">
@@ -345,7 +370,7 @@ export default function App() {
             <h2>TurtleBot View</h2>
             <span>MJPEG</span>
           </div>
-          <img className="stream" src={config.turtlebot_view_url} alt="TurtleBot camera stream" />
+          <img className="stream" src={turtlebotStreamUrl} alt="TurtleBot camera stream" />
         </article>
         <article className="panel">
           <div className="panelHeader">
@@ -354,7 +379,7 @@ export default function App() {
           </div>
           <img
             className="stream"
-            src={config.realsense_stream_url}
+            src={realsenseStreamUrl}
             alt="RealSense inspection stream"
             onLoad={() => setRealsenseSignal("online")}
             onError={() => setRealsenseSignal("offline")}
@@ -366,11 +391,11 @@ export default function App() {
         <article className="panel">
           <div className="panelHeader">
             <h2>TurtleBot Status</h2>
-            <span>{ageLabel(pose?.stamp)}</span>
+            <span>{ageLabel(pose?.stamp, clock)}</span>
           </div>
           <dl className="detailList">
             <div><dt>Pose Source</dt><dd>{pose?.source ?? "-"}</dd></div>
-            <div><dt>Map Signal</dt><dd>{ageLabel(map?.stamp)}</dd></div>
+            <div><dt>Map Signal</dt><dd>{ageLabel(map?.stamp, clock)}</dd></div>
             <div><dt>X</dt><dd>{fixed(pose?.x)}</dd></div>
             <div><dt>Y</dt><dd>{fixed(pose?.y)}</dd></div>
             <div><dt>Yaw</dt><dd>{fixed(pose?.yaw)}</dd></div>
