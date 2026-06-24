@@ -39,10 +39,10 @@ const WS_URL = "ws://localhost:8000/ws";
 const CONVEYOR_VIEW = {
   flowDuration: 16,
   parts: [
-    { id: "canlid-normal-1", variant: "normal", sourceColor: "yellow", startLeft: "10%" },
-    { id: "canlid-abnormal", variant: "abnormal", sourceColor: "red", startLeft: "24%" },
-    { id: "canlid-normal-2", variant: "normal", sourceColor: "green", startLeft: "38%" },
-    { id: "canlid-normal-3", variant: "normal", sourceColor: "blue", startLeft: "52%" },
+    { id: "bottlecap-normal-1", variant: "normal", startLeft: "10%" },
+    { id: "bottlecap-defect-1", variant: "defect", startLeft: "24%" },
+    { id: "bottlecap-normal-2", variant: "normal", startLeft: "38%" },
+    { id: "bottlecap-normal-3", variant: "normal", startLeft: "52%" },
   ],
 };
 
@@ -77,14 +77,18 @@ function statusTone(status: string): string {
   return "muted";
 }
 
-function legacyColorName(color?: string): string {
-  if (!color) return "unknown";
-  return color.charAt(0).toUpperCase() + color.slice(1);
+function isDefectDetection(item: Detection): boolean {
+  return item.is_defect || item.result === "defect";
 }
 
-function canLidLabel(color?: string): string {
-  if (["red", "yellow", "green", "blue"].includes(color ?? "")) return "Can Lid";
-  return "Can Lid";
+function bottleCapLabel(item: Detection): string {
+  return isDefectDetection(item) ? "병뚜껑 불량" : "병뚜껑 정상";
+}
+
+function bottleCapDisplayId(item: Detection, index: number): string {
+  const raw = item.part_id ?? `bottlecap_${item.session_total ?? index + 1}`;
+  const status = isDefectDetection(item) ? "defect" : "normal";
+  return raw.replace(/^robodk_(red|yellow|green|blue)_/i, `bottlecap_${status}_`);
 }
 
 function partStyle(startLeft: string): CSSProperties & Record<string, string> {
@@ -276,7 +280,7 @@ export default function App() {
                   className="part canLid"
                   key={part.id}
                   style={partStyle(part.startLeft)}
-                  title={`Can lid (${legacyColorName(part.sourceColor)})`}
+                  title="Bottle cap"
                 />
               ))}
             </div>
@@ -301,7 +305,7 @@ export default function App() {
         <article className="panel">
           <div className="panelHeader">
             <h2>캔 리드 검사 집계</h2>
-            <span className="stage muted">Can Lids {stats.session_total}</span>
+            <span className="stage muted">Bottle Caps {stats.session_total}</span>
           </div>
           <div className="metricGrid">
             <div>
@@ -329,11 +333,11 @@ export default function App() {
               <div className="detectionRow" key={`${item.part_id ?? index}-${index}`}>
                 <span className="colorDot can" />
                 <div>
-                  <strong>{item.part_id ?? `canlid_${item.session_total ?? index + 1}`}</strong>
-                  <small>{canLidLabel(item.color)} · source {legacyColorName(item.color)}</small>
+                  <strong>{bottleCapDisplayId(item, index)}</strong>
+                  <small>{bottleCapLabel(item)}</small>
                 </div>
-                <b className={item.is_defect || item.result === "defect" ? "danger" : "ok"}>
-                  {item.is_defect || item.result === "defect" ? "DEFECT" : "NORMAL"}
+                <b className={isDefectDetection(item) ? "danger" : "ok"}>
+                  {isDefectDetection(item) ? "불량" : "정상"}
                 </b>
               </div>
             ))}
@@ -356,7 +360,7 @@ export default function App() {
           </div>
           <div className="progressBlock">
             <div className="progressLabel">
-              <span>Abnormal Lid Bin</span>
+              <span>Defective Cap Bin</span>
               <b>{stats.defect_bin_load} / {stats.defect_threshold}</b>
             </div>
             <div className="progressTrack bin"><div style={{ width: `${binProgress}%` }} /></div>
