@@ -1,0 +1,86 @@
+solid box
+  facet normal 0 0 0
+    outer loop
+      vertex -590.000000 -460.000000 -7.000000
+      vertex 590.000000 -460.000000 -7.000000
+      vertex 590.000000 460.000000 -7.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -590.000000 -460.000000 -7.000000
+      vertex 590.000000 460.000000 -7.000000
+      vertex -590.000000 460.000000 -7.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -590.000000 -460.000000 7.000000
+      vertex 590.000000 460.000000 7.000000
+      vertex 590.000000 -460.000000 7.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -590.000000 -460.000000 7.000000
+      vertex -590.000000 460.000000 7.000000
+      vertex 590.000000 460.000000 7.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -590.000000 -460.000000 -7.000000
+      vertex -590.000000 -460.000000 7.000000
+      vertex 590.000000 -460.000000 7.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -590.000000 -460.000000 -7.000000
+      vertex 590.000000 -460.000000 7.000000
+      vertex 590.000000 -460.000000 -7.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 590.000000 -460.000000 -7.000000
+      vertex 590.000000 -460.000000 7.000000
+      vertex 590.000000 460.000000 7.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 590.000000 -460.000000 -7.000000
+      vertex 590.000000 460.000000 7.000000
+      vertex 590.000000 460.000000 -7.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 590.000000 460.000000 -7.000000
+      vertex 590.000000 460.000000 7.000000
+      vertex -590.000000 460.000000 7.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex 590.000000 460.000000 -7.000000
+      vertex -590.000000 460.000000 7.000000
+      vertex -590.000000 460.000000 -7.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -590.000000 460.000000 -7.000000
+      vertex -590.000000 460.000000 7.000000
+      vertex -590.000000 -460.000000 7.000000
+    endloop
+  endfacet
+  facet normal 0 0 0
+    outer loop
+      vertex -590.000000 460.000000 -7.000000
+      vertex -590.000000 -460.000000 7.000000
+      vertex -590.000000 -460.000000 -7.000000
+    endloop
+  endfacet
+endsolid box
