@@ -80,13 +80,19 @@ INITIAL_POSES = {
 # =========================================================
 AGV_START = [1210, -2510, 20]
 
-# 마지막 좌표를 불량 저장 위치로 사용
+# Station에 찍어둔 nav 프레임을 TurtleBot 이동 waypoint의 기준으로 사용한다.
+# RoboDK에서 nav1~nav6를 옮기면 스크립트가 그 좌표를 읽어 이동 경로에 반영한다.
+DEFECT_STORAGE_NAV_NAMES = ["nav1", "nav2", "nav3", "nav4", "nav5", "nav6"]
+
+# nav 프레임이 없는 환경에서만 쓰는 fallback 좌표 [X, Y, Z].
+# 마지막 좌표를 불량 저장 위치로 사용한다.
 DEFECT_STORAGE_PATH = [
-    [2560, -1140, 20],   # Frame 5
-    [-340, -780, 20],    # Frame 4
-    [330, -380, 20],     # Frame 3
-    [1960, -450, 20],    # Frame 2
-    [2640, -20, 20],     # Frame 1 / 불량 저장 위치
+    [160, -1290, 20],    # nav1
+    [3450, -1240, 20],   # nav2
+    [3450, -610, 20],    # nav3
+    [390, -650, 20],     # nav4
+    [350, 0, 20],        # nav5
+    [3580, 0, 20],       # nav6 / 불량 저장 위치
 ]
 
 # =========================================================
@@ -372,6 +378,24 @@ def calc_yaw_deg(p1, p2):
     return math.degrees(math.atan2(dy, dx))
 
 
+def get_defect_storage_path():
+    """RoboDK Station의 nav1~nav6 프레임을 TurtleBot waypoint로 읽는다.
+
+    nav 프레임은 시각 경로(path/path2) 위에 사용자가 직접 찍어둔 좌표이므로
+    스크립트의 하드코딩보다 우선한다. 프레임이 하나라도 없으면 fallback
+    DEFECT_STORAGE_PATH를 사용한다.
+    """
+    waypoints = []
+    for name in DEFECT_STORAGE_NAV_NAMES:
+        nav = RDK.Item(name)
+        if not nav.Valid():
+            print(f"[AGV] {name} 프레임이 없어 fallback DEFECT_STORAGE_PATH를 사용합니다.")
+            return [wp[:] for wp in DEFECT_STORAGE_PATH]
+        xyz = Pose_2_TxyzRxyz(nav.PoseAbs())
+        waypoints.append([xyz[0], xyz[1], AGV_START[2]])
+    return waypoints
+
+
 def get_local_xyz(item):
     with RDK_LOCK:
         return Pose_2_TxyzRxyz(item.Pose())
@@ -428,7 +452,9 @@ def reset_boxes():
 def reset_agv():
     print("[RESET] TurtleBot 시작 위치 세팅")
 
-    start_yaw = calc_yaw_deg(AGV_START, DEFECT_STORAGE_PATH[0])
+    nav_path = get_defect_storage_path()
+    first_waypoint = nav_path[0] if nav_path else DEFECT_STORAGE_PATH[0]
+    start_yaw = calc_yaw_deg(AGV_START, first_waypoint)
 
     with RDK_LOCK:
         turtle_base.setPoseAbs(
@@ -670,10 +696,25 @@ def move_smooth_abs(item, target_pose, speed=350, dt=0.03):
     dist = math.sqrt(dx * dx + dy * dy)
     steps = max(1, int(dist / (speed * dt)))
 
+    # TurtleBot body 정렬: 이동 구간마다 진행 방향 yaw를 먼저 맞춘 뒤,
+    # 위치만 보간한다. 기존처럼 yaw까지 선형 보간하면 코너 진입/이탈 구간에서
+    # 몸체가 경로를 비스듬히 물고 지나가 path와 겹쳐 보인다.
+    segment_yaw = target[5]
+    with RDK_LOCK:
+        aligned_start = start[:]
+        aligned_start[5] = segment_yaw
+        item.setPoseAbs(TxyzRxyz_2_Pose(aligned_start))
+
     for i in range(1, steps + 1):
         ratio = i / steps
 
-        now = [start[j] + (target[j] - start[j]) * ratio for j in range(6)]
+        now = start[:]
+        now[0] = start[0] + dx * ratio
+        now[1] = start[1] + dy * ratio
+        now[2] = start[2] + (target[2] - start[2]) * ratio
+        now[3] = target[3]
+        now[4] = target[4]
+        now[5] = segment_yaw
 
         with RDK_LOCK:
             item.setPoseAbs(TxyzRxyz_2_Pose(now))
@@ -700,31 +741,33 @@ def agv_to_defect_storage_worker():
         return
 
     print("[AGV] Red 적재 확인. 불량 저장 위치로 이동 시작")
+    nav_path = get_defect_storage_path()
+    waypoint_total = len(nav_path)
     notify_web_agv_state(
         "MOVING_TO_DEFECT_BIN",
         "TurtleBot started moving to defect storage.",
         waypoint_index=0,
-        waypoint_total=len(DEFECT_STORAGE_PATH),
+        waypoint_total=waypoint_total,
         position=AGV_START,
     )
 
     current = AGV_START
 
-    for idx, wp in enumerate(DEFECT_STORAGE_PATH):
+    for idx, wp in enumerate(nav_path):
         yaw = calc_yaw_deg(current, wp)
         target_pose = make_pose(wp[0], wp[1], wp[2], yaw)
 
         print(
             f"[AGV] Waypoint {idx + 1} 이동: "
-            f"X={wp[0]}, Y={wp[1]}, Z={wp[2]}, Yaw={yaw:.1f}"
+            f"X={wp[0]:.1f}, Y={wp[1]:.1f}, Z={wp[2]:.1f}, Yaw={yaw:.1f}"
         )
 
         final_pose = move_smooth_abs(turtle_base, target_pose, speed=AGV_SPEED, dt=AGV_DT)
         notify_web_agv_state(
             "MOVING_TO_DEFECT_BIN",
-            f"TurtleBot reached waypoint {idx + 1}/{len(DEFECT_STORAGE_PATH)}.",
+            f"TurtleBot reached waypoint {idx + 1}/{waypoint_total}.",
             waypoint_index=idx + 1,
-            waypoint_total=len(DEFECT_STORAGE_PATH),
+            waypoint_total=waypoint_total,
             position=final_pose[:3],
         )
         current = wp
@@ -733,12 +776,13 @@ def agv_to_defect_storage_worker():
         STATE["agv_done"] = True
         RDK.setParam("AGV_DONE", "1")
 
+    final_position = nav_path[-1] if nav_path else DEFECT_STORAGE_PATH[-1]
     notify_web_agv_state(
         "COMPLETED",
         "TurtleBot arrived at defect storage.",
-        waypoint_index=len(DEFECT_STORAGE_PATH),
-        waypoint_total=len(DEFECT_STORAGE_PATH),
-        position=DEFECT_STORAGE_PATH[-1],
+        waypoint_index=waypoint_total,
+        waypoint_total=waypoint_total,
+        position=final_position,
     )
     print("[AGV] 불량 저장 위치 도착. AGV_DONE = 1")
 
