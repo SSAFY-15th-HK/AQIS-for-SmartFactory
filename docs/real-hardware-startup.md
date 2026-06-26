@@ -118,7 +118,7 @@ ros2 launch turtlebot3_navigation2 navigation2.launch.py \
 
 ## 5. Terminal 4 - Dobot Bringup
 
-노트북에서 Dobot Magician을 연결하고 실행합니다. Dobot 드라이버 워크스페이스는 외부 의존성입니다.
+노트북에서 Dobot Magician을 연결하고 실행합니다. Dobot 드라이버 워크스페이스는 `jkaniuka/magician_ros2`를 사용합니다.
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -267,7 +267,27 @@ curl http://localhost:8080/stream?topic=/detection_image
 
 - ROS2 Humble
 - TurtleBot3 bringup/navigation workspace or apt packages
-- Dobot Magician ROS2 control workspace
-- RealSense ROS2 driver
+- Dobot Magician ROS2 control workspace: `https://github.com/jkaniuka/magician_ros2.git`
+- RealSense ROS2 driver: `https://github.com/realsenseai/realsense-ros.git`
 - YOLOv5 local repo (`AQIS_YOLOV5_REPO`, 기본 `~/yolov5`)
 - Raspberry Pi GPIO 환경 또는 mock conveyor mode
+
+외부 ROS source workspace를 새로 만들 때:
+
+```bash
+mkdir -p ~/aqis_external_ws/src
+cd ~/aqis_external_ws
+vcs import src < "$AQIS_ROOT/ros2.repos"
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install
+```
+
+Dobot만 기존 경로명으로 맞추고 싶다면:
+
+```bash
+mkdir -p ~/magician_ros2_control_system_ws/src
+git clone https://github.com/jkaniuka/magician_ros2.git ~/magician_ros2_control_system_ws/src/magician_ros2
+cd ~/magician_ros2_control_system_ws
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install
+```

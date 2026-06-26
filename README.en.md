@@ -37,6 +37,32 @@ Not tracked:
 - ROS bags, recordings, runtime DB files
 - Build outputs from third-party ROS workspaces
 
+## External ROS Packages
+
+AQIS keeps third-party ROS package build outputs out of Git. The source repositories are documented in `ros2.repos`.
+
+| Purpose | Repository | Recommended path |
+|---|---|---|
+| Dobot Magician | `https://github.com/jkaniuka/magician_ros2.git` | source build |
+| RealSense ROS wrapper | `https://github.com/realsenseai/realsense-ros.git` | apt or source build |
+| TurtleBot3 | `https://github.com/ROBOTIS-GIT/turtlebot3.git` | official TurtleBot workspace or source build |
+
+To fetch the source dependencies:
+
+```bash
+mkdir -p ~/aqis_external_ws/src
+cd ~/aqis_external_ws
+vcs import src < "$AQIS_ROOT/ros2.repos"
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install
+```
+
+Source it in new shells when needed:
+
+```bash
+source ~/aqis_external_ws/install/setup.bash
+```
+
 ## Quick Setup
 
 Target environment: Ubuntu 22.04 + ROS2 Humble.
