@@ -25,3 +25,17 @@ Thumbs.db
 
 # Logs
 *.log
+
+# ROS2 workspaces
+**/build/
+**/install/
+**/log/
+
+# Runtime/generated data
+*.bag
+*.db
+*.sqlite
+*.sqlite3
+*.mcap
+*.avi
+*.mp4

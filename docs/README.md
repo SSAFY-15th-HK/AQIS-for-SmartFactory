@@ -1,57 +1,46 @@
-# 프로젝트 기획 문서
+# AQIS 문서 인덱스
 
-스마트 팩토리 자동화 시스템 — 컨베이어 비전 검출 + 모바일 로봇 운반 + 음성 인터페이스
+이 디렉터리는 AQIS 프로젝트의 상세 문서를 모읍니다. 현재 기준 문서는 실제 장비 흐름입니다.
 
-## 문서 인덱스
+## 먼저 읽을 문서
+
+| 문서 | 내용 |
+|---|---|
+| [../README.md](../README.md) | 한국어 메인 README, 설치/실행 요약 |
+| [../README.en.md](../README.en.md) | English README |
+| [real-hardware-startup.md](./real-hardware-startup.md) | 실제 장비 시작 순서와 터미널별 명령 |
+
+## 현재 코드 구조
+
+| 경로 | 내용 |
+|---|---|
+| `aqis_ws/src/integrate_prac` | AQIS 소유 ROS2 패키지. RealSense YOLO, ROI, Detection topic, Dobot 보조 노드 |
+| `server` | FastAPI backend, ROS2 bridge, WebSocket, LLM proxy, process control |
+| `AQIS-real` | 실제 장비 웹 UI, 컨베이어 HTTP 서버, Dobot pick/place 스크립트 |
+| `AQIS-sim` | RoboDK 시뮬레이션 |
+| `maps` | Nav2/SLAM 지도 |
+| `config/nav2` | Nav2/AMCL 파라미터 |
+
+## 설계/기획 문서
+
+아래 문서는 프로젝트 초기 기획과 시뮬레이션 단계의 맥락을 포함합니다. 현재 실제 장비 흐름과 다른 내용이 있으면 `README.md`와 `real-hardware-startup.md`를 우선합니다.
 
 | # | 문서 | 내용 |
 |---|---|---|
-| 01 | [overview.md](./01-overview.md) | 프로젝트 개요, 학습 목표, 4단계 단계별 목표, 운영 원칙 |
-| 02 | [architecture.md](./02-architecture.md) | 3 레이어 통신 구조, 데이터 흐름 패턴, 안전 장치 흐름 |
-| 03 | [hardware.md](./03-hardware.md) | 부품 리스트, Smart Factory Shield 분석, 핀 매핑 (TBD) |
-| 04 | [tech-stack.md](./04-tech-stack.md) | 라이브러리/버전, 환경 변수, 라즈베리파이 5 GPIO 주의 |
-| 05 | [data-model.md](./05-data-model.md) | DB 스키마 SQL, ROS2 토픽, WebSocket/REST 메시지 포맷 |
-| 06 | [stages.md](./06-stages.md) | 1~4차 목표 상세, 동작 시나리오, 완료 기준, 축소 정책 |
-| 07 | [roles-and-schedule.md](./07-roles-and-schedule.md) | 2명 역할 분담, 4주 일정, 체크포인트 |
-| 08 | [stt-llm-tts.md](./08-stt-llm-tts.md) | 음성 인터페이스 흐름, 명령 카탈로그, 폴백 |
-| 09 | [demo-scenario.md](./09-demo-scenario.md) | 5분 시연 영상 시나리오, 촬영/편집 가이드 |
-| 10 | [risks.md](./10-risks.md) | 위험 매트릭스, W1 우선 검증 체크리스트 |
-| 11 | [interfaces.md](./11-interfaces.md) | 두 개발자 간 합의서 (W1 D1-2 작성) |
-
-## 빠른 요약
-
-- **목표**: 컨베이어 위 빨간색 불량품을 검출 → 서보 분류기로 분리 → 터틀봇이 적재함을 운반
-- **인원/기간**: 2명, 4주, 파트타임 (3~4h/일)
-- **핵심 기술**: ROS2 Humble, FastAPI, React/Vue, OpenCV, SQLite, Whisper STT, llama.cpp
-- **하드웨어**: 노트북 + 라즈베리파이 5(컨베이어 제어) + 터틀봇3 와플 + RealSense D435i
-- **시연**: 사전 녹화 5분 영상 (라이브 시연 안 함)
-
-## 4단계 목표
-
-1. **1차 (관통 필수)**: 컨베이어 비전 검출 + 서보 2갈래 분류
-2. **2차 (관통 필수)**: 터틀봇 음성/카운트 트리거 자율 이동
-3. **3차 (관통 필수)**: SLAM 매핑 + Nav2 자율주행 (+ 동적 장애물 회피, 시간 여유 시)
-4. **4차 (도전, stretch)**: Dobot Pick & Place로 분류기 대체
-
-## 4주 체크포인트 (요약)
-
-| 시점 | 통과 기준 | 미달 시 |
-|---|---|---|
-| W1말 | 컨베이어→검출→UI 핵심 흐름 동작 | W2 첫 이틀로 이월 |
-| W2말 | 1차 완성 + 터틀봇 단일 goal 이동 | 4차 즉시 포기 |
-| W3말 | 2~3차 통합, 시연 가능 상태 | 동적 장애물 회피 포기 |
-| W4 중반 | 시연 영상 1차 컷 존재 | 4차 포기, 영상 집중 |
-
-## 시작하기 전 (W1 D1)
-
-1. 컨베이어 키트 매뉴얼 수령 (구매처 문의)
-2. 인터페이스 합의서 작성 (`11-interfaces.md`)
-3. 우선 검증 체크리스트 통과 (`10-risks.md` §W1 우선 검증 항목)
-4. 시연 환경 후보지 답사 (5m 이상 권장)
+| 01 | [01-overview.md](./01-overview.md) | 초기 프로젝트 개요와 단계별 목표 |
+| 02 | [02-architecture.md](./02-architecture.md) | 통신 구조와 데이터 흐름 |
+| 03 | [03-hardware.md](./03-hardware.md) | 하드웨어 목록 |
+| 04 | [04-tech-stack.md](./04-tech-stack.md) | 기술 스택과 환경 변수 |
+| 05 | [05-data-model.md](./05-data-model.md) | DB/ROS/WebSocket 데이터 모델 |
+| 06 | [06-stages.md](./06-stages.md) | 단계별 개발 계획 |
+| 07 | [07-roles-and-schedule.md](./07-roles-and-schedule.md) | 역할과 일정 |
+| 08 | [08-stt-llm-tts.md](./08-stt-llm-tts.md) | LLM/음성 인터페이스 계획 |
+| 09 | [09-demo-scenario.md](./09-demo-scenario.md) | 데모 시나리오 |
+| 10 | [10-risks.md](./10-risks.md) | 리스크와 검증 항목 |
+| 11 | [11-interfaces.md](./11-interfaces.md) | 인터페이스 합의서 |
 
 ## 문서 갱신 원칙
 
-- 모든 결정 변경은 해당 문서에 반영하고 commit
-- ROS2 토픽/WebSocket 포맷 변경은 양쪽 동의 필요
-- `03-hardware.md`의 핀 매핑은 키트 매뉴얼 수령 즉시 채움
-- `11-interfaces.md`의 환경 변수와 좌표는 W3에 확정
+- 실제 장비 실행 방법이 바뀌면 `real-hardware-startup.md`를 먼저 갱신합니다.
+- 클론 후 재현에 필요한 파일은 repo 안으로 옮기고, 외부 의존성은 README에 명시합니다.
+- 비밀값은 `server/.env`에만 두고 Git에는 올리지 않습니다.
