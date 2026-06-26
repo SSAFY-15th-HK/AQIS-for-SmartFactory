@@ -37,6 +37,32 @@ AQIS-for-SmartFactory/
 - ROS bag, 녹화 영상, DB 파일
 - TurtleBot3, Dobot, RealSense 드라이버 같은 외부 패키지의 빌드 결과
 
+## 외부 ROS 패키지
+
+AQIS가 사용한 외부 ROS 패키지는 Git에 빌드 결과를 넣지 않고, `ros2.repos`와 문서로 재현합니다.
+
+| 용도 | 저장소 | 권장 방식 |
+|---|---|---|
+| Dobot Magician | `https://github.com/jkaniuka/magician_ros2.git` | source build |
+| RealSense ROS wrapper | `https://github.com/realsenseai/realsense-ros.git` | apt 또는 source build |
+| TurtleBot3 | `https://github.com/ROBOTIS-GIT/turtlebot3.git` | TurtleBot 공식 workspace 또는 source build |
+
+외부 소스를 한 번에 받을 때:
+
+```bash
+mkdir -p ~/aqis_external_ws/src
+cd ~/aqis_external_ws
+vcs import src < "$AQIS_ROOT/ros2.repos"
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install
+```
+
+새 터미널에서는 필요에 따라 다음을 source 합니다.
+
+```bash
+source ~/aqis_external_ws/install/setup.bash
+```
+
 ## 빠른 설치
 
 Ubuntu 22.04 + ROS2 Humble 기준입니다.
