@@ -69,12 +69,31 @@
 
 ## 데모
 
+### 1. 실제 품질 검사 · Dobot 분류
+
 <p align="center">
-  <img src="./docs/assets/portfolio/real-ops.png" alt="Dobot 3D 상태와 검사 현황을 보여주는 RealOps 대시보드" width="49%" />
-  <img src="./docs/assets/portfolio/slam-navigation.png" alt="TurtleBot 카메라, SLAM 지도와 위치를 보여주는 대시보드" width="49%" />
+  <img src="./docs/assets/portfolio/real-demo.gif" alt="RealSense와 YOLO로 캔 뚜껑을 검사하고 Dobot으로 분류하는 실제 장비 시연" width="900" />
 </p>
 
-Drive에 보관된 원본 시연 영상은 팀 내부 자료로 유지하고, 외부 방문자가 바로 확인할 수 있도록 실제 장비 영상의 일부를 위 GIF와 이미지로 공개했습니다.
+RealSense 깊이 카메라와 YOLO가 캔 뚜껑의 불량을 판정하고, 컨베이어와 Dobot이 결과에 따라 제품을 분류합니다.
+
+### 2. TurtleBot SLAM · 실시간 관제
+
+<p align="center">
+  <img src="./docs/assets/portfolio/slam-demo.gif" alt="TurtleBot 카메라, SLAM 지도, 위치와 이동 경로를 함께 보여주는 실시간 관제 시연" width="900" />
+</p>
+
+카메라 영상, SLAM 지도, 로봇 위치와 이벤트 스트림을 한 화면에서 확인하며 자율주행 상태를 관제합니다.
+
+### 3. RoboDK 디지털 트윈
+
+<p align="center">
+  <img src="./docs/assets/portfolio/simulation-demo.gif" alt="RoboDK 디지털 트윈과 시뮬레이션 대시보드가 연동되는 시연" width="900" />
+</p>
+
+실제 장비와 동일한 백엔드·이벤트 모델을 사용해 검사, 분류, 운반 시나리오를 RoboDK에서 검증합니다.
+
+Drive의 원본 영상 3개는 팀 내부 자료로 유지하고, 외부 방문자가 바로 확인할 수 있도록 핵심 구간만 경량 GIF로 공개했습니다.
 
 ## 시스템 아키텍처
 
