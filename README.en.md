@@ -79,7 +79,7 @@ RealSense depth data and YOLO determine lid defects, then the conveyor and Dobot
 
 #### Full Dobot sorting cycle · 34 seconds
 
-__DOBOT_FULL_VIDEO_URL__
+https://github.com/user-attachments/assets/70017e3e-594d-43b2-bcef-59bb4a8f0c32
 
 The full sequence covers normal and defect detection, suction pickup, transfer to the sorting bin, placement, robot return, and the final result. Only idle intervals are accelerated, preserving the actual operation order.
 

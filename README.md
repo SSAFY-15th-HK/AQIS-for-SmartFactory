@@ -79,7 +79,7 @@ RealSense 깊이 카메라와 YOLO가 캔 뚜껑의 불량을 판정하고, 컨�
 
 #### 전체 두봇 분류 공정 · 34초
 
-__DOBOT_FULL_VIDEO_URL__
+https://github.com/user-attachments/assets/70017e3e-594d-43b2-bcef-59bb4a8f0c32
 
 정상·불량 검출부터 흡착, 분류함 이동, 배치, 복귀와 최종 결과까지 전체 공정 장면을 포함했습니다. 대기 구간만 가속해 실제 동작 순서는 유지했습니다.
 
