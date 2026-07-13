@@ -77,6 +77,12 @@ The team used one FastAPI backend and event model with separate mock, simulation
 
 RealSense depth data and YOLO determine lid defects, then the conveyor and Dobot sort each product according to the result.
 
+#### Full Dobot sorting cycle · 34 seconds
+
+__DOBOT_FULL_VIDEO_URL__
+
+The full sequence covers normal and defect detection, suction pickup, transfer to the sorting bin, placement, robot return, and the final result. Only idle intervals are accelerated, preserving the actual operation order.
+
 ### 2. TurtleBot SLAM and live operations
 
 <p align="center">
