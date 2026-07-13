@@ -1,40 +1,46 @@
 # AQIS Simulation Workspace
 
-`AQIS-sim` contains only simulation assets and the simulation monitoring web app.
+RoboDK 디지털 트윈과 Simulation Dashboard를 모은 workspace입니다. 실제 장비가 준비되기 전에 동일한 FastAPI 백엔드와 이벤트 모델을 공유하는 simulation 경로로 공정 흐름을 개발·검증하기 위해 사용했습니다.
 
-## Structure
+## 구조
 
 ```text
 AQIS-sim/
   robodk/
-    AQIS.rdk
-    Main.py
-    box/
-    conv/
-    object/
-    robot/
-    tool/
-  web/
-    package.json
-    src/
+    AQIS.rdk                    # RoboDK station
+    Main.py                     # FastAPI와 통신하는 simulation script
+    robot/                      # UR5, TurtleBot3 Waffle
+    tool/                       # OnRobot VG10 vacuum gripper
+    conv/                       # 2m conveyor
+    object/                     # can, normal/abnormal can lid, factory objects
+    box/                        # normal/defect bins
+    visual_assets/              # 공장·안전·경로 시각 자산
+  web/                          # React/Vite Simulation Dashboard
 ```
 
-## RoboDK
+## RoboDK 실행
 
-- `robodk/AQIS.rdk`: RoboDK station file
-- `robodk/Main.py`: RoboDK-side simulation script that talks to the FastAPI server
+1. 루트의 FastAPI 서버를 실행합니다.
+2. RoboDK에서 `robodk/AQIS.rdk`를 엽니다.
+3. `robodk/Main.py`를 실행합니다.
 
-The script uses:
+기본 서버 주소:
 
 ```text
 http://localhost:8000
 ```
 
-Start the FastAPI server before running `Main.py`.
+RoboDK station에는 다음 주요 자산이 포함됩니다.
 
-## Web
+- `robot/UR5.robot`: Pick & Place robot arm
+- `tool/OnRobot-VG10-Vacuum-Gripper.tool`: Vacuum gripper
+- `conv/Conveyor-Belt-2m.robot`: Conveyor
+- `robot/turtlebot3_waffle.step`: Mobile robot visual model
+- `object/can.step`: Can body
+- `object/canlid_normal.step`, `object/canlid_abnormal.step`: Inspection parts
+- `box/Bin-Blue.sld`, `box/Bin-Red.sld`: Normal/defect bins
 
-The simulation dashboard lives in `web/`.
+## Simulation Dashboard
 
 ```bash
 cd AQIS-sim/web
@@ -42,32 +48,14 @@ npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-The web app is a monitoring-oriented animation for understanding process state. It is not intended to be frame-synchronized with RoboDK.
+Simulation Dashboard는 공정 상태를 이해하고 서버 이벤트 흐름을 검증하기 위한 모니터링 UI입니다. RoboDK 프레임과 픽셀 단위로 동기화되는 렌더러는 아닙니다.
 
-## RoboDK Assets
-
-- `robot/UR5.robot`: Pick-and-place robot arm
-- `tool/OnRobot-VG10-Vacuum-Gripper.tool`: Vacuum gripper tool
-- `conv/Conveyor-Belt-2m.robot`: Conveyor model
-- `robot/turtlebot3_waffle.step`: AGV/TurtleBot visual model
-- `object/Red.step`, `Blue.step`, `Green.step`, `Yellow.step`: inspection parts
-- `box/Bin-Blue.sld`: Normal bin
-- `box/Bin-Red.sld`: Defect bin
-- `object/path.step`: AGV route visual guide
-- `object/Floor.sld`: Floor model
-
-## Recommended Item Names
-
-RoboDK scripts and the FastAPI adapter should use stable item names. In `AQIS.rdk`, keep or rename items to:
+## Mock-first 역할
 
 ```text
-UR5
-OnRobot VG10 Vacuum Gripper
-Conveyor Belt (2m) Base
-MainFrame
-turtlebot Base
-Yellow
-Red
-Green
-Blue
+mock device events → FastAPI → WebSocket → Simulation Dashboard
+                           ↓
+                     RoboDK process
 ```
+
+시뮬레이션과 실제 장비 경로가 같은 이벤트 모델을 사용하도록 구성해, 하드웨어 없이도 UI·API·공정 상태 전이를 먼저 검증할 수 있습니다.
