@@ -3,7 +3,7 @@
 > **AI Quality Inspection System** — 실제 장비의 품질 검사·로봇 분류·실시간 관제와 디지털 트윈 운반 시나리오를 구현한 스마트팩토리 프로젝트
 
 <p align="center">
-  <img src="./docs/assets/portfolio/real-demo.gif" alt="AQIS 실제 장비에서 RealSense와 YOLO로 캔 뚜껑을 검사하는 모습" width="900" />
+  <img src="./docs/assets/portfolio/real-demo.gif" alt="AQIS 실제 장비에서 RealSense와 YOLO로 캔 뚜껑을 검사하는 모습" width="720" />
 </p>
 
 <p align="center">
@@ -72,7 +72,7 @@
 ### 1. 실제 품질 검사 · Dobot 분류
 
 <p align="center">
-  <img src="./docs/assets/portfolio/real-demo.gif" alt="RealSense와 YOLO로 캔 뚜껑을 검사하고 Dobot으로 분류하는 실제 장비 시연" width="900" />
+  <img src="./docs/assets/portfolio/real-demo.gif" alt="RealSense와 YOLO로 캔 뚜껑을 검사하고 Dobot으로 분류하는 실제 장비 시연" width="720" />
 </p>
 
 RealSense 깊이 카메라와 YOLO가 캔 뚜껑의 불량을 판정하고, 컨베이어와 Dobot이 결과에 따라 제품을 분류합니다.
@@ -80,15 +80,15 @@ RealSense 깊이 카메라와 YOLO가 캔 뚜껑의 불량을 판정하고, 컨�
 ### 2. TurtleBot SLAM · 실시간 관제
 
 <p align="center">
-  <img src="./docs/assets/portfolio/slam-demo.gif" alt="TurtleBot 카메라, SLAM 지도, 위치와 이동 경로를 함께 보여주는 실시간 관제 시연" width="900" />
+  <img src="./docs/assets/portfolio/slam-demo.gif" alt="TurtleBot 카메라, SLAM 지도, 위치와 이동 경로를 함께 보여주는 실시간 관제 시연" width="720" />
 </p>
 
-카메라 영상, SLAM 지도, 로봇 위치와 이벤트 스트림을 한 화면에서 확인하며 자율주행 상태를 관제합니다.
+카메라 영상, SLAM 지도, 로봇 위치와 이벤트 스트림을 한 화면에서 확인하며 SLAM·주행 상태를 관제합니다.
 
 ### 3. RoboDK 디지털 트윈
 
 <p align="center">
-  <img src="./docs/assets/portfolio/simulation-demo.gif" alt="RoboDK 디지털 트윈과 시뮬레이션 대시보드가 연동되는 시연" width="900" />
+  <img src="./docs/assets/portfolio/simulation-demo.gif" alt="RoboDK 디지털 트윈과 시뮬레이션 대시보드가 연동되는 시연" width="720" />
 </p>
 
 실제 장비와 동일한 백엔드·이벤트 모델을 사용해 검사, 분류, 운반 시나리오를 RoboDK에서 검증합니다.

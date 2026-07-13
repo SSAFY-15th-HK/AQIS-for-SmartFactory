@@ -3,7 +3,7 @@
 > **AI Quality Inspection System** — a smart-factory project combining real-device quality inspection, robotic sorting, live operations, and a digital-twin transport scenario.
 
 <p align="center">
-  <img src="./docs/assets/portfolio/real-demo.gif" alt="AQIS inspecting can lids with RealSense and YOLO" width="900" />
+  <img src="./docs/assets/portfolio/real-demo.gif" alt="AQIS inspecting can lids with RealSense and YOLO" width="720" />
 </p>
 
 <p align="center">
@@ -72,7 +72,7 @@ The team used one FastAPI backend and event model with separate mock, simulation
 ### 1. Real inspection and Dobot sorting
 
 <p align="center">
-  <img src="./docs/assets/portfolio/real-demo.gif" alt="Real hardware demo inspecting can lids with RealSense and YOLO before Dobot sorting" width="900" />
+  <img src="./docs/assets/portfolio/real-demo.gif" alt="Real hardware demo inspecting can lids with RealSense and YOLO before Dobot sorting" width="720" />
 </p>
 
 RealSense depth data and YOLO determine lid defects, then the conveyor and Dobot sort each product according to the result.
@@ -80,7 +80,7 @@ RealSense depth data and YOLO determine lid defects, then the conveyor and Dobot
 ### 2. TurtleBot SLAM and live operations
 
 <p align="center">
-  <img src="./docs/assets/portfolio/slam-demo.gif" alt="Live operations demo showing the TurtleBot camera, SLAM map, pose, and route" width="900" />
+  <img src="./docs/assets/portfolio/slam-demo.gif" alt="Live operations demo showing the TurtleBot camera, SLAM map, pose, and route" width="720" />
 </p>
 
 The dashboard brings the camera feed, SLAM map, robot pose, and event stream together for real-time navigation monitoring.
@@ -88,7 +88,7 @@ The dashboard brings the camera feed, SLAM map, robot pose, and event stream tog
 ### 3. RoboDK digital twin
 
 <p align="center">
-  <img src="./docs/assets/portfolio/simulation-demo.gif" alt="RoboDK digital twin synchronized with the simulation dashboard" width="900" />
+  <img src="./docs/assets/portfolio/simulation-demo.gif" alt="RoboDK digital twin synchronized with the simulation dashboard" width="720" />
 </p>
 
 The digital twin reuses the real system's backend and event model to verify inspection, sorting, and transport scenarios in RoboDK.
