@@ -3,7 +3,7 @@
 > **AI Quality Inspection System** — a smart-factory project combining real-device quality inspection, robotic sorting, live operations, and a digital-twin transport scenario.
 
 <p align="center">
-  <img src="./docs/assets/portfolio/real-demo.gif" alt="AQIS inspecting can lids with RealSense and YOLO" width="900" />
+  <img src="./docs/assets/portfolio/real-demo.gif" alt="AQIS inspecting can lids with RealSense and YOLO" width="720" />
 </p>
 
 <p align="center">
@@ -69,12 +69,31 @@ The team used one FastAPI backend and event model with separate mock, simulation
 
 ## Demo
 
+### 1. Real inspection and Dobot sorting
+
 <p align="center">
-  <img src="./docs/assets/portfolio/real-ops.png" alt="RealOps dashboard with Dobot 3D state and inspection summary" width="49%" />
-  <img src="./docs/assets/portfolio/slam-navigation.png" alt="Dashboard with TurtleBot camera, SLAM map, and pose" width="49%" />
+  <img src="./docs/assets/portfolio/real-demo.gif" alt="Real hardware demo inspecting can lids with RealSense and YOLO before Dobot sorting" width="720" />
 </p>
 
-The original demo recordings remain in the team's private Drive. The GIF and screenshots above were extracted so public visitors can review the working system without Drive access.
+RealSense depth data and YOLO determine lid defects, then the conveyor and Dobot sort each product according to the result.
+
+### 2. TurtleBot SLAM and live operations
+
+<p align="center">
+  <img src="./docs/assets/portfolio/slam-demo.gif" alt="Live operations demo showing the TurtleBot camera, SLAM map, pose, and route" width="720" />
+</p>
+
+The dashboard brings the camera feed, SLAM map, robot pose, and event stream together for real-time navigation monitoring.
+
+### 3. RoboDK digital twin
+
+<p align="center">
+  <img src="./docs/assets/portfolio/simulation-demo.gif" alt="RoboDK digital twin synchronized with the simulation dashboard" width="720" />
+</p>
+
+The digital twin reuses the real system's backend and event model to verify inspection, sorting, and transport scenarios in RoboDK.
+
+The three original recordings remain in the team's private Drive. Lightweight GIFs expose only the key sequences so public visitors can review the system without Drive access.
 
 ## Architecture
 
